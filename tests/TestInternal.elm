@@ -1,4 +1,4 @@
-module TestGoogle exposing (bug1, bug2, bug3, charCodeAt, wholePipeline)
+module TestInternal exposing (bug1, bug2, bug3, charCodeAt, wholePipeline)
 
 import Array
 import Bytes exposing (Endianness(..))
@@ -6,11 +6,11 @@ import Bytes.Decode as Decode
 import Bytes.Encode as Encode
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, int, list, string)
-import Google
+import Generated
+import Internal
 import Test exposing (..)
 import Transforms
-import Landnámabók
-import Generated
+
 
 wholePipeline =
     let
@@ -30,7 +30,7 @@ wholePipeline =
                         data =
                             toBuffer32 raw
                     in
-                    case Google.decode data of
+                    case Internal.decode data of
                         Err e ->
                             Expect.fail e
 
@@ -48,7 +48,7 @@ wholePipeline =
                                 |> Encode.sequence
                                 |> Encode.encode
                     in
-                    case Google.decode data of
+                    case Internal.decode data of
                         Err e ->
                             Expect.fail e
 
@@ -84,7 +84,7 @@ wholePipeline =
                             , distOffset = Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 137, 138, 139, 140, 141, 142, 143, 144, 153, 154, 155, 156, 157, 158, 159, 160, 185, 186, 187, 188, 189, 190, 191, 192, 217, 218, 219, 220, 221, 222, 223, 224, 281, 282, 283, 284, 285, 286, 287, 288, 345, 346, 347, 348, 349, 350, 351, 352, 473, 474, 475, 476, 477, 478, 479, 480, 601, 602, 603, 604, 605, 606, 607, 608, 857, 858, 859, 860, 861, 862, 863, 864, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120, 1625, 1626, 1627, 1628, 1629, 1630, 1631, 1632, 2137, 2138, 2139, 2140, 2141, 2142, 2143, 2144, 3161, 3162, 3163, 3164, 3165, 3166, 3167, 3168, 4185, 4186, 4187, 4188, 4189, 4190, 4191, 4192, 6233, 6234, 6235, 6236, 6237, 6238, 6239, 6240, 8281, 8282, 8283, 8284, 8285, 8286, 8287, 8288, 12377, 12378, 12379, 12380, 12381, 12382, 12383, 12384, 16473, 16474, 16475, 16476, 16477, 16478, 16479, 16480, 24665, 24666, 24667, 24668, 24669, 24670, 24671, 24672, 32857, 32858, 32859, 32860, 32861, 32862, 32863, 32864, 49241, 49242, 49243, 49244, 49245, 49246, 49247, 49248, 65625, 65626, 65627, 65628, 65629, 65630, 65631, 65632, 98393, 98394, 98395, 98396, 98397, 98398, 98399, 98400, 131161, 131162, 131163, 131164, 131165, 131166, 131167, 131168, 196697, 196698, 196699, 196700, 196701, 196702, 196703, 196704, 262233, 262234, 262235, 262236, 262237, 262238, 262239, 262240, 393305, 393306, 393307, 393308, 393309, 393310, 393311, 393312, 524377, 524378, 524379, 524380, 524381, 524382, 524383, 524384, 786521, 786522, 786523, 786524, 786525, 786526, 786527, 786528, 1048665, 1048666, 1048667, 1048668, 1048669, 1048670, 1048671, 1048672, 1572953, 1572954, 1572955, 1572956, 1572957, 1572958, 1572959, 1572960, 2097241, 2097242, 2097243, 2097244, 2097245, 2097246, 2097247, 2097248, 3145817, 3145818, 3145819, 3145820, 3145821, 3145822, 3145823, 3145824, 4194393, 4194394, 4194395, 4194396, 4194397, 4194398, 4194399, 4194400, 6291545, 6291546, 6291547, 6291548, 6291549, 6291550, 6291551, 6291552, 8388697, 8388698, 8388699, 8388700, 8388701, 8388702, 8388703, 8388704, 12583001, 12583002, 12583003, 12583004, 12583005, 12583006, 12583007, 12583008, 16777305, 16777306, 16777307, 16777308, 16777309, 16777310, 16777311, 16777312, 25165913, 25165914, 25165915, 25165916, 25165917, 25165918, 25165919, 25165920, 33554521, 33554522, 33554523, 33554524, 33554525, 33554526, 33554527, 33554528, 50331737, 50331738, 50331739, 50331740, 50331741, 50331742, 50331743, 50331744, 67108953, 67108954, 67108955, 67108956, 67108957, 67108958, 67108959, 67108960, 100663385, 100663386, 100663387, 100663388, 100663389, 100663390, 100663391, 100663392, 134217817, 134217818, 134217819, 134217820, 134217821, 134217822, 134217823, 134217824, 201326681, 201326682, 201326683, 201326684, 201326685, 201326686, 201326687, 201326688, 268435545, 268435546, 268435547, 268435548, 268435549, 268435550, 268435551, 268435552, 402653273, 402653274, 402653275, 402653276, 402653277, 402653278, 402653279, 402653280, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
                             }
                     in
-                    Google.calculateDistanceLut 520 input
+                    Internal.calculateDistanceLut 520 input
                         |> Expect.equal output
             , pipeline "test uncompressed" "this is a test\n" [ 27, 14, 0, 248, 37, 20, 82, 144, 66, 20, 169, 91, 100, 234, 20, 193 ]
             ]
@@ -94,15 +94,16 @@ wholePipeline =
         , pipeline "more icelandic" "fóru aftur um haustið til Færeyja; og er þeir sigldu af landinu, féll snær mikill á\n" [ 27, 90, 0, 248, 141, 212, 81, 141, 203, 221, 204, 182, 117, 74, 250, 235, 134, 102, 183, 244, 221, 193, 240, 117, 224, 221, 96, 193, 158, 7, 27, 99, 103, 109, 143, 208, 11, 250, 149, 36, 48, 197, 14, 171, 230, 60, 32, 186, 195, 17, 3, 183, 196, 218, 204, 98, 211, 112, 165, 222, 254, 71, 78, 124, 29, 205, 145, 111, 116, 44, 118, 171, 1, 81, 152, 204, 202, 25, 7, 52, 99, 134, 53, 83, 199, 224, 75, 51, 20 ]
         , pipeline32 "paragraph1" paragraph1Text paragraph1Bytes
         , pipeline "paragraph2" "GRINNELL FORMATION.\nBecause of \n" [ 27, 31, 0, 248, 141, 212, 70, 247, 82, 178, 148, 10, 71, 82, 93, 148, 196, 228, 36, 21, 249, 5, 153, 98, 200, 168, 180, 79, 253, 203, 195, 11 ]
-        , pipeline32 "landnámabók" Landnámabók.text  Landnámabók.bytes 
-        , 
-            test "sanity" <| \_ -> 
-                let shortBuffer = Array.fromList [-13640,10370,8661,-6512,4264,15739,14562,-6202,-25097,-32417,27029,-22764,-20155,13111,6147,9887,14833,-17929,23225,-12287]
+        , test "sanity" <|
+            \_ ->
+                let
+                    shortBuffer =
+                        Array.fromList [ -13640, 10370, 8661, -6512, 4264, 15739, 14562, -6202, -25097, -32417, 27029, -22764, -20155, 13111, 6147, 9887, 14833, -17929, 23225, -12287 ]
                 in
+                Internal.topUpAccumulator { pos = 10864, bitOffset = 18, accumulator32 = 972105375, shortBuffer = shortBuffer, halfOffset = 17 }
+                    |> Expect.equal { pos = 10864, bitOffset = 2, accumulator32 = -1174980111, shortBuffer = shortBuffer, halfOffset = 18 }
 
-            Google.topUpAccumulator { pos  = 10864, bitOffset =  18, accumulator32 = 972105375 , shortBuffer = shortBuffer ,halfOffset = 17 } 
-            |> Expect.equal { pos  = 10864, bitOffset =  2, accumulator32 =   -1174980111 , shortBuffer = shortBuffer , halfOffset = 18}
-        ,  pipeline "generated" Generated.text Generated.bytes
+        -- , pipeline "generated" Generated.text Generated.bytes
         ]
 
 
@@ -114,11 +115,11 @@ charCodeAt =
     describe "charCodeAt"
         [ test "at 0" <|
             \_ ->
-                Google.charCodeAt 0 data
+                Internal.charCodeAt 0 data
                     |> Expect.equal (Just 97)
         , test "at 5" <|
             \_ ->
-                Google.charCodeAt 5 data
+                Internal.charCodeAt 5 data
                     |> Expect.equal (Just 102)
         ]
 
@@ -135,7 +136,7 @@ bug3 =
                         Array.fromList
                             [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 ]
                 in
-                Google.inverseMoveToFrontTransform input 128
+                Internal.inverseMoveToFrontTransform input 128
                     |> Expect.equal output
         , test "moveToFront" <|
             \_ ->
@@ -148,7 +149,7 @@ bug3 =
                             |> Array.set 0 1
                             |> Array.set 1 0
                 in
-                Google.moveToFront 1 input
+                Internal.moveToFront 1 input
                     |> Expect.equal output
         ]
 
@@ -164,11 +165,11 @@ bug2 =
                     result =
                         Array.fromList [ 116, 105, 109, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
                 in
-                Transforms.transformDictionaryWord ringBuffer 0 Google.dictionary_data 0 4 Transforms.rfc_transforms 0
+                Transforms.transformDictionaryWord ringBuffer 0 Internal.dictionary_data 0 4 Transforms.rfc_transforms 0
                     |> Expect.equal ( result, 4 )
         , test "calculateDistanceAlphabetSize" <|
             \_ ->
-                Google.calculateDistanceAlphabetSize 0 0 24
+                Internal.calculateDistanceAlphabetSize 0 0 24
                     |> Expect.equal 64
         , test "readComplexHuffmanCodeHelp" <|
             \_ ->
@@ -179,7 +180,7 @@ bug2 =
                     afterState =
                         { accumulator32 = 37821262, bitOffset = 5, halfOffset = 12, shortBuffer = Array.repeat 2080 0 }
                 in
-                Google.readComplexHuffmanCodeHelp 0 (Array.repeat 18 0) 32 0 state
+                Internal.readComplexHuffmanCodeHelp 0 (Array.repeat 18 0) 32 0 state
                     |> Tuple.second
                     |> Expect.equal ( 0, 2, Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0 ] )
         , test "readComplexHuffmanCodeHelp 2" <|
@@ -194,12 +195,12 @@ bug2 =
                     afterState =
                         { bitOffset = 17, accumulator32 = 229958528, halfOffset = 5, shortBuffer = shortBuffer }
                 in
-                Google.readComplexHuffmanCodeHelp 0 (Array.repeat 18 0) 32 0 state
+                Internal.readComplexHuffmanCodeHelp 0 (Array.repeat 18 0) 32 0 state
                     |> Tuple.second
                     |> Expect.equal ( 0, 2, Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0 ] )
         , test "readFewBits" <|
             \_ ->
-                Google.readFewBits 2 { accumulator32 = 3508, bitOffset = 9 }
+                Internal.readFewBits 2 { accumulator32 = 3508, bitOffset = 9 }
                     |> Expect.equal (Ok ( { accumulator32 = 3508, bitOffset = 11 }, 2 ))
         , test "buildHuffmanTable" <|
             \_ ->
@@ -210,7 +211,7 @@ bug2 =
                     newTableGroup =
                         Array.fromList [ 1, 393216, 393248, 393232, 393264, 393224, 393256, 393240, 393272, 393220, 393252, 393236, 393268, 393228, 393260, 393244, 393276, 393218, 393250, 393234, 393266, 393226, 393258, 393242, 393274, 393222, 393254, 393238, 393270, 393230, 393262, 393246, 393278, 393217, 393249, 393233, 393265, 393225, 393257, 393241, 393273, 393221, 393253, 393237, 393269, 393229, 393261, 393245, 393277, 393219, 393251, 393235, 393267, 393227, 393259, 393243, 393275, 393223, 393255, 393239, 393271, 393231, 393263, 393247, 393279, 393216, 393248, 393232, 393264, 393224, 393256, 393240, 393272, 393220, 393252, 393236, 393268, 393228, 393260, 393244, 393276, 393218, 393250, 393234, 393266, 393226, 393258, 393242, 393274, 393222, 393254, 393238, 393270, 393230, 393262, 393246, 393278, 393217, 393249, 393233, 393265, 393225, 393257, 393241, 393273, 393221, 393253, 393237, 393269, 393229, 393261, 393245, 393277, 393219, 393251, 393235, 393267, 393227, 393259, 393243, 393275, 393223, 393255, 393239, 393271, 393231, 393263, 393247, 393279, 393216, 393248, 393232, 393264, 393224, 393256, 393240, 393272, 393220, 393252, 393236, 393268, 393228, 393260, 393244, 393276, 393218, 393250, 393234, 393266, 393226, 393258, 393242, 393274, 393222, 393254, 393238, 393270, 393230, 393262, 393246, 393278, 393217, 393249, 393233, 393265, 393225, 393257, 393241, 393273, 393221, 393253, 393237, 393269, 393229, 393261, 393245, 393277, 393219, 393251, 393235, 393267, 393227, 393259, 393243, 393275, 393223, 393255, 393239, 393271, 393231, 393263, 393247, 393279, 393216, 393248, 393232, 393264, 393224, 393256, 393240, 393272, 393220, 393252, 393236, 393268, 393228, 393260, 393244, 393276, 393218, 393250, 393234, 393266, 393226, 393258, 393242, 393274, 393222, 393254, 393238, 393270, 393230, 393262, 393246, 393278, 393217, 393249, 393233, 393265, 393225, 393257, 393241, 393273, 393221, 393253, 393237, 393269, 393229, 393261, 393245, 393277, 393219, 393251, 393235, 393267, 393227, 393259, 393243, 393275, 393223, 393255, 393239, 393271, 393231, 393263, 393247, 393279, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
                 in
-                Google.buildHuffmanTable tableGroup 0 8 (Array.repeat 64 6)
+                Internal.buildHuffmanTable tableGroup 0 8 (Array.repeat 64 6)
                     |> Expect.equal { tableGroup = newTableGroup, total_size = 256 }
         , test "buildHuffmanTable 2 " <|
             \_ ->
@@ -228,8 +229,8 @@ bug2 =
                         -- Array.foldl (+) 0
                         Array.slice 0 10
                 in
-                -- Google.buildHuffmanTable tableGroup 0 8 codeLengths |> Expect.equal { tableGroup = newTableGroup, total_size = 256 }
-                Google.buildHuffmanTable tableGroup 0 8 codeLengths
+                -- Internal.buildHuffmanTable tableGroup 0 8 codeLengths |> Expect.equal { tableGroup = newTableGroup, total_size = 256 }
+                Internal.buildHuffmanTable tableGroup 0 8 codeLengths
                     |> .tableGroup
                     |> sum
                     |> Expect.equal (sum newTableGroup)
@@ -242,7 +243,7 @@ bug2 =
                     expected =
                         Array.fromList [ 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
                 in
-                Google.generateCount input 64
+                Internal.generateCount input 64
                     |> Expect.equal expected
         , test "count 2" <|
             \_ ->
@@ -253,7 +254,7 @@ bug2 =
                     expected =
                         Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 320, 384, 0, 0, 0, 0, 0 ]
                 in
-                Google.generateCount codeLengths 704
+                Internal.generateCount codeLengths 704
                     |> Expect.equal expected
         , test "initialOffsets" <|
             \_ ->
@@ -264,7 +265,7 @@ bug2 =
                     expected =
                         Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 64, 64, 64, 64, 64, 64, 64, 64, 64 ]
                 in
-                Google.generateOffsets count
+                Internal.generateOffsets count
                     |> Expect.equal expected
         , test "initialOffsets 2" <|
             \_ ->
@@ -275,7 +276,7 @@ bug2 =
                     expected =
                         Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 320, 704, 704, 704, 704, 704 ]
                 in
-                Google.generateOffsets count
+                Internal.generateOffsets count
                     |> Expect.equal expected
         , test "sortSymbols" <|
             \_ ->
@@ -295,7 +296,7 @@ bug2 =
                     expectedOffsets =
                         Array.fromList [ 0, 0, 0, 0, 0, 0, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64 ]
                 in
-                Google.sortSymbols { codeLengthsSize = 64, codeLengths = codeLengths, offset = initialOffsets }
+                Internal.sortSymbols { codeLengthsSize = 64, codeLengths = codeLengths, offset = initialOffsets }
                     |> Expect.equal { sorted = expectedSorted, offset = expectedOffsets }
         , test "sortSymbols 2" <|
             \_ ->
@@ -315,7 +316,7 @@ bug2 =
                     expectedOffsets =
                         Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 320, 704, 704, 704, 704, 704, 704 ]
                 in
-                Google.sortSymbols { codeLengthsSize = 704, codeLengths = codeLengths, offset = initialOffsets }
+                Internal.sortSymbols { codeLengthsSize = 704, codeLengths = codeLengths, offset = initialOffsets }
                     |> Expect.equal { sorted = expectedSorted, offset = expectedOffsets }
         , test "phase1" <|
             \_ ->
@@ -338,15 +339,15 @@ bug2 =
                     sorted =
                         Array.fromList (List.range 0 703)
                 in
-                Google.phase1 rootBits tableOffset tableSize sorted count 1 0 0 2 tableGroup
+                Internal.phase1 rootBits tableOffset tableSize sorted count 1 0 0 2 tableGroup
                     |> Expect.equal ( ( Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 320, 384, 0, 0, 0, 0, 0 ], 0 ), 0, tableGroup )
         , test "nextTableBitSize" <|
             \_ ->
-                Google.nextTableBitSize (Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 320, 384, 0, 0, 0, 0, 0 ]) 9 8
+                Internal.nextTableBitSize (Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 320, 384, 0, 0, 0, 0, 0 ]) 9 8
                     |> Expect.equal 1
         , test "cmd_lookup" <|
             \_ ->
-                Array.get 522 Google.cmd_lookup
+                Array.get 522 Internal.cmd_lookup
                     |> Expect.equal (Just 4)
         , test "offsets" <|
             \_ ->
@@ -357,7 +358,7 @@ bug2 =
                     copy =
                         Array.fromList [ 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 102, 134, 198, 326, 582, 1094, 2118 ]
                 in
-                Google.calculateOffsets
+                Internal.calculateOffsets
                     |> Expect.equal ( insert, copy )
         ]
 
@@ -373,7 +374,7 @@ bug1 =
                     expected =
                         Array.fromList [ 16, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
                 in
-                Google.generateCount data (Array.length data)
+                Internal.generateCount data (Array.length data)
                     |> Expect.equal expected
         , test "offsets" <|
             \_ ->
@@ -384,7 +385,7 @@ bug1 =
                     expected =
                         Array.fromList [ 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 ]
                 in
-                Google.generateOffsets data
+                Internal.generateOffsets data
                     |> Expect.equal expected
         , test "sorted" <|
             \_ ->
@@ -404,7 +405,7 @@ bug1 =
                     expected =
                         { sorted = sorted, offset = offset }
                 in
-                Google.sortSymbols data
+                Internal.sortSymbols data
                     |> Expect.equal expected
         , test "replicateValue" <|
             \_ ->
@@ -415,7 +416,7 @@ bug1 =
                     expected =
                         Array.fromList [ 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 0 ]
                 in
-                Google.replicateValue data 0 2 32 65544
+                Internal.replicateValue data 0 2 32 65544
                     |> Expect.equal expected
         , test "calculateDistanceLut" <|
             \_ ->
@@ -437,7 +438,7 @@ bug1 =
                         , numDirectDistanceCodes = 0
                         }
                 in
-                Google.calculateDistanceLut 64 data
+                Internal.calculateDistanceLut 64 data
                     |> Expect.equal expected
         , test "phase1" <|
             \_ ->
@@ -474,7 +475,7 @@ bug1 =
                         , output
                         )
                 in
-                Google.phase1 rootBits tableOffset tableSize sorted currentCount len key symbol step currentTableGroup
+                Internal.phase1 rootBits tableOffset tableSize sorted currentCount len key symbol step currentTableGroup
                     |> Expect.equal expected
         , test "actual" <|
             \_ ->
@@ -485,7 +486,7 @@ bug1 =
                     arg2 =
                         Array.fromList [ 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0 ]
                 in
-                Google.buildHuffmanTable arg1 32 5 arg2
+                Internal.buildHuffmanTable arg1 32 5 arg2
                     |> .tableGroup
                     |> Expect.equal (Array.fromList [ 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 65544, 65552, 0 ])
         ]

@@ -1,4 +1,4 @@
-module Google exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, calculateOffsets, charCodeAt, cmd_lookup, decode, decompress, dictionary_data, generateCount, generateOffsets, inverseMoveToFrontTransform, main, moveToFront, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
+module Internal exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, calculateOffsets, charCodeAt, cmd_lookup, decode, decompress, dictionary_data, generateCount, generateOffsets, inverseMoveToFrontTransform, moveToFront, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
 
 import Array exposing (Array)
 import Bitwise
@@ -6,25 +6,9 @@ import Bytes exposing (Bytes)
 import Bytes.Decode as Decode exposing (Step(..))
 import Bytes.Encode as Encode
 import DictionaryData
-import Html
 import Transforms
 
 
-main =
-    let
-        input =
-            -- himselfself
-            [ 0x21, 0xF4, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x1C, 0xA7, 0x6D, 0x00, 0x00, 0x38, 0xD8, 0x32, 0x89, 0x01, 0x12, 0x00, 0x00, 0x77, 0xDA, 0x34, 0x7B, 0xDB, 0x50, 0x80, 0x02, 0x80, 0x62, 0x62, 0x62, 0x62, 0x62, 0x62, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x4E, 0xDB, 0x00, 0x00, 0x70, 0xB0, 0x65, 0x12, 0x03, 0x24, 0x00, 0x00, 0xEE, 0xB4, 0x11, 0x24, 0x00 ]
-                |> List.map Encode.unsignedInt8
-                |> Encode.sequence
-                |> Encode.encode
-    in
-    case decode input of
-        Err e ->
-            Html.text "it failed"
-
-        Ok _ ->
-            Html.text "it worked"
 
 
 dictionary_offsets_by_length =
