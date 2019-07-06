@@ -102,7 +102,7 @@ wholePipeline =
 
             Google.topUpAccumulator { pos  = 10864, bitOffset =  18, accumulator32 = 972105375 , shortBuffer = shortBuffer ,halfOffset = 17 } 
             |> Expect.equal { pos  = 10864, bitOffset =  2, accumulator32 =   -1174980111 , shortBuffer = shortBuffer , halfOffset = 18}
-        , only <| pipeline32 "generated" Generated.text Generated.bytes
+        ,  pipeline "generated" Generated.text Generated.bytes
         ]
 
 

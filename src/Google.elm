@@ -1065,10 +1065,6 @@ readSymbol tableGroup tableIdx s =
             Bitwise.and (readTableGroup offset) 0xFFFF
     in
     if bits <= 8 then
-        let
-            _ =
-                Debug.log "new bit offset" ( s.bitOffset + bits, ( s.pos, s.bitOffset, s.accumulator32 ) )
-        in
         ( { s | bitOffset = s.bitOffset + bits }, sym )
 
     else
@@ -1564,9 +1560,6 @@ phase1 rootBits tableOffset tableSize sorted =
 buildHuffmanTable : Array Int -> Int -> Int -> Array Int -> { tableGroup : Array Int, total_size : Int }
 buildHuffmanTable tableGroup tableIdx rootBits codeLengths_ =
     let
-        _ =
-            Debug.log "----------" ()
-
         codeLengthsSize =
             Array.length codeLengths_
 
@@ -1989,19 +1982,11 @@ readMetablockHuffmanCodesAndContextMaps =
                                 in
                                 map2 Tuple.pair
                                     (decodeHuffmanTreeGroup 256 256 numLiteralTrees)
-                                    (let
-                                        _ =
-                                            Debug.log "================ after this " ( s2.pos, s2.bitOffset, s2.accumulator32 )
-                                     in
-                                     decodeHuffmanTreeGroup 704 704 s4.numCommandBlockTypes
-                                    )
+                                    (decodeHuffmanTreeGroup 704 704 s4.numCommandBlockTypes)
                                     s4
                                     |> Result.andThen
                                         (\( s5, ( literalTreeGroup, commandTreeGroup ) ) ->
                                             let
-                                                _ =
-                                                    Debug.log "================ ^^^ " ( s2.pos, s2.bitOffset, s2.accumulator32 )
-
                                                 s6 =
                                                     { s5 | literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup }
 
@@ -2346,7 +2331,7 @@ calculateDistanceLut alphabetSizeLimit state =
 -}
 
 
-decompress : State -> Result Error Bytes
+decompress : State -> Result Error ( Bytes, State )
 decompress unvalidated =
     if unvalidated.runningState == 0 then
         Err "Can't decompreunvalidateds until initialized"
@@ -2397,7 +2382,16 @@ decompress unvalidated =
                 Err e
 
             Ok ( r, _ ) ->
-                (.output >> Array.map Encode.unsignedInt8 >> Array.toList >> Encode.sequence >> Encode.encode >> Ok) r
+                ( r
+                    |> .output
+                    |> Array.slice 0 r.outputUsed
+                    |> Array.map Encode.unsignedInt8
+                    |> Array.toList
+                    |> Encode.sequence
+                    |> Encode.encode
+                , r
+                )
+                    |> Ok
 
 
 type alias Context =
@@ -2409,9 +2403,8 @@ type alias Context =
 decompressHelp : Context -> Decoder Context
 decompressHelp context s =
     let
-        -- _ = Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
-        _ =
-            Debug.log "halfOffset" s.halfOffset
+        _ = -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+            ()
     in
     case s.runningState of
         10 ->
@@ -2453,9 +2446,6 @@ decompressHelp context s =
 
                     Ok ( s1, _ ) ->
                         let
-                            _ =
-                                Debug.log "more before" ( s1.pos, s1.bitOffset, s1.accumulator32 )
-
                             maybeCommandBlock =
                                 if s1.commandBlockLength == 0 then
                                     decodeCommandBlockSwitch s1
@@ -2468,11 +2458,9 @@ decompressHelp context s =
                                 |> Result.map
                                     (\v ->
                                         let
+                                            -- _ = Debug.log "before" ( ( v.pos, v.bitOffset, v.accumulator32 ), ( w.pos, w.bitOffset, w.accumulator32 ), ( v.halfOffset, Array.slice 0 20 v.shortBuffer ) )
                                             w =
                                                 topUpAccumulator { v | commandBlockLength = v.commandBlockLength - 1 }
-
-                                            _ =
-                                                Debug.log "inbetween before" ( ( v.pos, v.bitOffset, v.accumulator32 ), v.halfOffset, Array.slice 0 20 v.shortBuffer )
                                         in
                                         w
                                     )
@@ -2481,10 +2469,6 @@ decompressHelp context s =
                                 Err e
 
                             Ok s2 ->
-                                let
-                                    _ =
-                                        Debug.log "before" ( s2.pos, s2.bitOffset, s2.accumulator32 )
-                                in
                                 case readSymbol s2.commandTreeGroup s2.commandTreeIdx s2 of
                                     ( s3, v ) ->
                                         let
@@ -2510,7 +2494,10 @@ decompressHelp context s =
                                                         Bitwise.and insertAndCopyExtraBits 0xFF
                                                 in
                                                 readBits extraBits state
-                                                    |> Result.map (\( s_, w ) -> { s_ | insertLength = w + insertLengthOffset })
+                                                    |> Result.map
+                                                        (\( s_, w ) ->
+                                                            { s_ | insertLength = w + insertLengthOffset }
+                                                        )
 
                                             readCopyLength state =
                                                 let
@@ -2825,8 +2812,11 @@ setArraySlice slice startIndex whole =
 
         after =
             Array.slice (startIndex + Array.length slice) (Array.length whole) whole
+
+        result =
+            Array.append before (Array.append slice after)
     in
-    Array.append before (Array.append slice after)
+    result
 
 
 copyUncompressedData : State -> Result Error State
@@ -3090,9 +3080,6 @@ remainder7 context s =
                                     else
                                         s5.maxBackwardDistance
                             }
-
-                        _ =
-                            Debug.log "distance" ( s6.pos, s6.distance, s6.maxDistance )
                     in
                     if s6.distance > s6.maxDistance then
                         Ok ( context, { s6 | runningState = 9 } )
@@ -3288,6 +3275,20 @@ jumpToByteBoundary s =
         Ok ( s, () )
 
 
+unsafeGet16 : Int -> Array Int -> Int
+unsafeGet16 i arr =
+    case Array.get i arr of
+        Nothing ->
+            0
+
+        Just v ->
+            if v >= 2 ^ 16 then
+                v - (2 ^ 16)
+
+            else
+                v
+
+
 readFewBits :
     Int
     -> { state | bitOffset : Int, accumulator32 : Int }
@@ -3337,19 +3338,11 @@ type alias ReadInputState s =
 maybeReadMoreInput : Int -> ReadInputState s -> Result Error ( ReadInputState s, () )
 maybeReadMoreInput n s =
     if s.halfOffset > n then
-        let
-            _ =
-                Debug.log "halfOffset doReadMoreInput before " ( s.pos, s.halfOffset )
-        in
         case doReadMoreInput s of
             Err e ->
                 Err e
 
             Ok ( s2, _ ) ->
-                let
-                    _ =
-                        Debug.log "halfOffset maybeReadMoreInput => " ( s2.halfOffset, n )
-                in
                 Ok ( s2, () )
 
     else
@@ -3378,10 +3371,6 @@ doReadMoreInput s =
                 Err e
 
             Ok ( s2, bytesInBuffer2 ) ->
-                let
-                    _ =
-                        Debug.log "halfOffset doReadMoreInput " ( s.halfOffset, s2.halfOffset, s2.pos )
-                in
                 Ok ( bytesToNibbles bytesInBuffer2 s2, () )
 
 
@@ -3431,6 +3420,22 @@ copyWithin destination sourceStart sourceEnd arr =
         copyWithin (destination + 1) (sourceStart + 1) sourceEnd newArray
 
 
+overflow8 v =
+    if v > 2 ^ 7 then
+        v - 2 ^ 8
+
+    else
+        v
+
+
+overflow16 v =
+    if v > 2 ^ 15 then
+        v - 2 ^ 16
+
+    else
+        v
+
+
 bytesToNibbles : Int -> { state | shortBuffer : Array Int, byteBuffer : Array Int } -> { state | shortBuffer : Array Int, byteBuffer : Array Int }
 bytesToNibbles byteLen s =
     let
@@ -3440,12 +3445,19 @@ bytesToNibbles byteLen s =
         go i shortBuffer =
             if i < halfLen then
                 let
+                    byte1 =
+                        Array.get (i * 2) s.byteBuffer |> Maybe.withDefault 0
+
+                    byte2 =
+                        Array.get (i * 2 + 1) s.byteBuffer |> Maybe.withDefault 0
+
                     value =
                         Bitwise.or
-                            (Bitwise.and 0xFF (Array.get (i * 2) s.byteBuffer |> Maybe.withDefault 0))
-                            (Bitwise.and 0xFF (Array.get (i * 2 + 1) s.byteBuffer |> Maybe.withDefault 0)
+                            (Bitwise.and 0xFF byte1)
+                            (Bitwise.and 0xFF byte2
                                 |> Bitwise.shiftLeftBy 8
                             )
+                            |> overflow16
                 in
                 go (i + 1) (Array.set i value shortBuffer)
 
@@ -3469,7 +3481,7 @@ readInput offset length s =
             end - s.input.offset
 
         decoder =
-            Decode.map2 (\_ v -> v) (Decode.bytes offset) (array bytesRead Decode.unsignedInt8)
+            Decode.map2 (\_ v -> v) (Decode.bytes s.input.offset) (array bytesRead Decode.signedInt8)
     in
     case Decode.decode decoder s.input.buffer of
         Just newSegment ->
@@ -3481,7 +3493,7 @@ readInput offset length s =
                     { oldInput | offset = oldInput.offset + bytesRead }
 
                 newByteBuffer =
-                    Array.append (Array.slice 0 offset s.byteBuffer) newSegment
+                    setArraySlice newSegment offset s.byteBuffer
             in
             Ok ( { s | input = newInput, byteBuffer = newByteBuffer }, bytesRead )
 
@@ -3541,9 +3553,26 @@ decode input =
             Err e
 
         Ok s ->
-            case decompress { s | outputLength = 16384 } of
+            let
+                decodeLoop state chunks =
+                    case decompress { state | outputLength = 16384, outputOffset = 0, outputUsed = 0, output = Array.repeat 16384 0 } of
+                        Err e ->
+                            Err e
+
+                        Ok ( buffer, newState ) ->
+                            if Bytes.width buffer < 16384 then
+                                Ok (List.reverse (buffer :: chunks))
+
+                            else
+                                decodeLoop newState (buffer :: chunks)
+            in
+            case decodeLoop s [] of
                 Err e ->
                     Err e
 
                 Ok v ->
-                    Ok v
+                    v
+                        |> List.map Encode.bytes
+                        |> Encode.sequence
+                        |> Encode.encode
+                        |> Ok
