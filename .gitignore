@@ -1,0 +1,6 @@
+tests/Gutenberg/*.elm
+tests/Gutenberg.elm
+__pycache__/
+elm-stuff/
+src/old/
+tools.py
