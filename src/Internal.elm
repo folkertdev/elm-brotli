@@ -2465,7 +2465,6 @@ decompressHelp context s =
                                         let
                                             cmdCode =
                                                 Bitwise.shiftLeftBy 2 v
-                                                    |> Debug.log "cmdCode"
 
                                             insertAndCopyExtraBits =
                                                 unsafeGet (cmdCode + 0) cmd_lookup
@@ -2509,7 +2508,7 @@ decompressHelp context s =
         7 ->
             let
                 maybeLiteral state =
-                    if Debug.log "literalBlockLength" state.literalBlockLength == 0 then
+                    if state.literalBlockLength == 0 then
                         decodeLiteralBlockSwitch state
                             |> Result.map (\w -> { w | literalBlockLength = w.literalBlockLength - 1 })
 
