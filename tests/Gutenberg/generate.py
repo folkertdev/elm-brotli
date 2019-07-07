@@ -19,7 +19,7 @@ module Gutenberg exposing (tests)
 import Bytes
 import Bytes.Encode as Encode 
 import Bytes.Decode as Decode 
-import Google
+import Internal
 
 
 import Expect exposing (Expectation)
@@ -38,7 +38,7 @@ pipeline name expected raw =
                                 |> Encode.sequence
                                 |> Encode.encode
                     in
-                    case Google.decode data of
+                    case Internal.decode data of
                         Err e ->
                             Expect.fail e
 

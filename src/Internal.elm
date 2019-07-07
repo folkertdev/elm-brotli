@@ -9,6 +9,8 @@ import DictionaryData
 import Transforms
 
 
+log name value =
+    value
 
 
 dictionary_offsets_by_length =
@@ -799,7 +801,7 @@ decodeMetaBlockNibbles numberOfNibbles s =
 
                             Ok ( s2, bits ) ->
                                 if bits == 0 && i + 1 == sizeNibbles && sizeNibbles > 4 then
-                                    Err (Debug.log "error" "Exuberant nibble")
+                                    Err (log "error" "Exuberant nibble")
 
                                 else
                                     nibbleLoop (i + 1) sizeNibbles { s2 | metaBlockLength = Bitwise.or s2.metaBlockLength (Bitwise.shiftLeftBy (i * 4) bits) }
@@ -1957,7 +1959,7 @@ readMetablockHuffmanCodesAndContextMaps =
                         in
                         case decodeContextMap distanceSize (Array.repeat distanceSize 0) s2 of
                             Err e ->
-                                Err (Debug.log "got an error after decoding context map" e)
+                                Err (log "got an error after decoding context map" e)
 
                             Ok ( s3, ( distContextMap, numDistTrees ) ) ->
                                 let
@@ -2089,7 +2091,7 @@ decodeContextMap contextMapSize contextMap s0 =
                                 in
                                 case readHuffmanCode alphabetSize alphabetSize (Array.repeat (tableSize + 1) 0) tableIdx s3 of
                                     Err e ->
-                                        Err (Debug.log "error after reading huffman code" e)
+                                        Err (log "error after reading huffman code" e)
 
                                     Ok ( s4, table ) ->
                                         let
@@ -2387,7 +2389,8 @@ type alias Context =
 decompressHelp : Context -> Decoder Context
 decompressHelp context s =
     let
-        _ = -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+        _ =
+            -- log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
             ()
     in
     case s.runningState of
@@ -2442,7 +2445,7 @@ decompressHelp context s =
                                 |> Result.map
                                     (\v ->
                                         let
-                                            -- _ = Debug.log "before" ( ( v.pos, v.bitOffset, v.accumulator32 ), ( w.pos, w.bitOffset, w.accumulator32 ), ( v.halfOffset, Array.slice 0 20 v.shortBuffer ) )
+                                            -- _ = log "before" ( ( v.pos, v.bitOffset, v.accumulator32 ), ( w.pos, w.bitOffset, w.accumulator32 ), ( v.halfOffset, Array.slice 0 20 v.shortBuffer ) )
                                             w =
                                                 topUpAccumulator { v | commandBlockLength = v.commandBlockLength - 1 }
                                         in
@@ -2489,23 +2492,7 @@ decompressHelp context s =
                                                         Bitwise.shiftRightBy 8 insertAndCopyExtraBits
                                                 in
                                                 readBits extraBits state
-                                                    |> Result.map
-                                                        (\( s_, w ) ->
-                                                            let
-                                                                logger f x =
-                                                                    if s_.pos == 4344 then
-                                                                        -- Debug.log f x
-                                                                        -- Debug.todo ("done " ++ String.fromInt cmdCode)
-                                                                        x
-
-                                                                    else
-                                                                        x
-
-                                                                _ =
-                                                                    logger "new copy length" cmdCode
-                                                            in
-                                                            { s_ | copyLength = w + copyLengthOffset }
-                                                        )
+                                                    |> Result.map (\( s_, w ) -> { s_ | copyLength = w + copyLengthOffset })
                                         in
                                         case readInsertLength s4 |> Result.andThen readCopyLength of
                                             Err e ->
@@ -2617,16 +2604,6 @@ decompressHelp context s =
 
         8 ->
             let
-                _ =
-                    logger "here" ( s.copyLength, s.j )
-
-                logger f x =
-                    if s.pos == 4344 then
-                        Debug.log f x
-
-                    else
-                        x
-
                 src =
                     Bitwise.and (s.pos - s.distance) context.ringBufferMask
 

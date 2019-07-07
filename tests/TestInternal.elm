@@ -6,7 +6,6 @@ import Bytes.Decode as Decode
 import Bytes.Encode as Encode
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, int, list, string)
-import Generated
 import Internal
 import Test exposing (..)
 import Transforms

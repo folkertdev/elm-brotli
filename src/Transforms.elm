@@ -12,10 +12,17 @@ rfc_transforms =
 
 type alias Transforms =
     { numTransforms : Int
-    , triplets : Array Int
+    , triplets : Array Triplet
     , prefixSuffixStorage : Array Int
     , prefixSuffixHeads : Array Int
     , params : Array Int
+    }
+
+
+type alias Triplet =
+    { prefixIdx : Int
+    , transformType : Int
+    , suffixIdx : Int
     }
 
 
@@ -23,7 +30,7 @@ new : Int -> Int -> Int -> Transforms
 new numTransforms prefixSuffixLen prefixSuffixCount =
     { numTransforms = numTransforms
     , params = Array.repeat numTransforms 0
-    , triplets = Array.repeat (3 * numTransforms) 0
+    , triplets = Array.repeat numTransforms (Triplet 0 0 0)
     , prefixSuffixStorage = Array.repeat prefixSuffixLen 0
     , prefixSuffixHeads = Array.repeat (prefixSuffixCount + 1) 0
     }
@@ -50,26 +57,19 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
         offset =
             dstOffset
 
-        triplets =
-            transforms.triplets
-
         prefixSuffixStorage =
             transforms.prefixSuffixStorage
 
         prefixSuffixHeads =
             transforms.prefixSuffixHeads
 
-        transformOffset =
-            3 * transformIndex
+        { prefixIdx, transformType, suffixIdx } =
+            case Array.get transformIndex transforms.triplets of
+                Nothing ->
+                    Triplet 0 0 0
 
-        prefixIdx =
-            unsafeGet transformOffset triplets
-
-        transformType =
-            unsafeGet (transformOffset + 1) triplets
-
-        suffixIdx =
-            unsafeGet (transformOffset + 2) triplets
+                Just v ->
+                    v
 
         prefix =
             unsafeGet prefixIdx prefixSuffixHeads
@@ -212,10 +212,6 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
                     ( newOffset, applyTransform1 len1 newOffset newAccum )
 
                 else if transformType == 21 || transformType == 22 then
-                    let
-                        _ =
-                            Debug.log "triggered" ()
-                    in
                     ( newOffset, applyTransform2 len1 newOffset newAccum )
 
                 else
@@ -340,8 +336,15 @@ unpackTransforms prefixSuffixSrc transformsSrc transforms =
                 ( accum, headsAccum )
 
         go2 i currentTransforms =
-            if i < 363 then
-                go2 (i + 1) (Array.set i (charCodeAt i transformsSrc - 32) currentTransforms)
+            if i < (3 * 121) then
+                let
+                    triplet =
+                        Triplet
+                            (charCodeAt i transformsSrc - 32)
+                            (charCodeAt (i + 1) transformsSrc - 32)
+                            (charCodeAt (i + 2) transformsSrc - 32)
+                in
+                go2 (i + 3) (Array.set (i // 3) triplet currentTransforms)
 
             else
                 currentTransforms
@@ -395,4 +398,3 @@ update index f arr =
 
         Just v ->
             Array.set index (f v) arr
-
