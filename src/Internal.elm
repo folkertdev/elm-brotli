@@ -10,7 +10,8 @@ import Transforms
 
 
 log =
-    Debug.log
+    -- Debug.log
+    \_ -> identity
 
 
 dictionary_offsets_by_length =
