@@ -1,4 +1,4 @@
-module Internal exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, calculateOffsets, charCodeAt, cmd_lookup, decode, decompress, dictionary_data, generateCount, generateOffsets, inverseMoveToFrontTransform, moveToFront, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
+module Internal exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, calculateOffsets, charCodeAt, cmd_lookup, decode, decompress, dictionary_data, generateCount, generateOffsets, inverseMoveToFrontTransform, lookup, moveToFront, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
 
 import Array exposing (Array)
 import Bitwise
@@ -9,8 +9,8 @@ import DictionaryData
 import Transforms
 
 
-log name value =
-    value
+log =
+    Debug.log
 
 
 dictionary_offsets_by_length =
@@ -172,7 +172,7 @@ unpackLookupTable =
             if i < 16 then
                 loop5 (i + 1)
                     (arr
-                        |> Array.set (1702 + i) 1
+                        |> Array.set (1792 + i) 1
                         |> Array.set (2032 + i) 6
                     )
 
@@ -181,7 +181,11 @@ unpackLookupTable =
 
         loop6 i arr =
             if i < 256 then
-                loop6 (i + 1) (Array.set (1536 + i) (Bitwise.shiftLeftBy 3 (unsafeGet (1792 + i) arr)) arr)
+                let
+                    value =
+                        Bitwise.shiftLeftBy 3 (unsafeGet (1792 + i) arr)
+                in
+                loop6 (i + 1) (Array.set (1536 + i) value arr)
 
             else
                 arr
@@ -2390,8 +2394,7 @@ decompressHelp : Context -> Decoder Context
 decompressHelp context s =
     let
         _ =
-            -- log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
-            ()
+            log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
     in
     case s.runningState of
         10 ->
@@ -2461,6 +2464,7 @@ decompressHelp context s =
                                         let
                                             cmdCode =
                                                 Bitwise.shiftLeftBy 2 v
+                                                    |> Debug.log "cmdCode"
 
                                             insertAndCopyExtraBits =
                                                 unsafeGet (cmdCode + 0) cmd_lookup
@@ -2504,7 +2508,7 @@ decompressHelp context s =
         7 ->
             let
                 maybeLiteral state =
-                    if state.literalBlockLength == 0 then
+                    if Debug.log "literalBlockLength" state.literalBlockLength == 0 then
                         decodeLiteralBlockSwitch state
                             |> Result.map (\w -> { w | literalBlockLength = w.literalBlockLength - 1 })
 
@@ -2547,6 +2551,9 @@ decompressHelp context s =
 
             else
                 let
+                    _ =
+                        log "in the else" ( s.j, s.insertLength )
+
                     init_prevByte1 =
                         unsafeGet (Bitwise.and (s.pos - 1) context.ringBufferMask) s.ringBuffer
                             |> Bitwise.and 0xFF
@@ -2556,6 +2563,11 @@ decompressHelp context s =
                             |> Bitwise.and 0xFF
 
                     go currentContext prevByte1 prevByte2 s0 =
+                        let
+                            _ =
+                                -- log "decodeLiteralBlockSwitch bef" ( s0.runningState, ( s0.pos, s0.bitOffset, s0.accumulator32 ) )
+                                ()
+                        in
                         if s0.j < s0.insertLength then
                             case maybeReadMoreInput 2030 s0 |> Result.map Tuple.first |> Result.andThen maybeLiteral |> Result.map topUpAccumulator of
                                 Err e ->
@@ -2563,13 +2575,24 @@ decompressHelp context s =
 
                                 Ok s1 ->
                                     let
+                                        i1 =
+                                            s1.contextLookupOffset1 + prevByte1
+
+                                        i2 =
+                                            s1.contextLookupOffset2 + prevByte2
+
+                                        v1 =
+                                            unsafeGet i1 lookup
+
+                                        v2 =
+                                            unsafeGet i2 lookup
+
                                         literalContext =
-                                            Bitwise.or
-                                                (unsafeGet (s1.contextLookupOffset1 + prevByte1) lookup)
-                                                (unsafeGet (s1.contextLookupOffset2 + prevByte2) lookup)
+                                            Bitwise.or v1 v2
 
                                         literalTreeIdx =
-                                            unsafeGet (s1.contextMapSlice + literalContext) s1.contextMap |> Bitwise.and 0xFF
+                                            unsafeGet (s1.contextMapSlice + literalContext) s1.contextMap
+                                                |> Bitwise.and 0xFF
 
                                         s2 =
                                             s1
@@ -2937,6 +2960,10 @@ writeRingBuffer s =
 
 remainder7 : Context -> State -> Result Error ( Context, State )
 remainder7 context s =
+    let
+        _ =
+            log "state in remainder " ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+    in
     if s.runningState /= 7 then
         Ok ( context, s )
 
