@@ -3001,8 +3001,13 @@ remainder7 context s =
                                 Ok { state | distanceBlockLength = state.distanceBlockLength - 1 }
                     in
                     if oldDistanceCode < 0 then
+                        let
+                            newDistance =
+                                unsafeGet s1.distRbIdx s1.rings
+                        in
                         Ok
-                            ( { s1 | distance = unsafeGet s1.distRbIdx s1.rings }
+                            ( { s1 | distance = newDistance }
+                            , newDistance
                             , oldDistanceCode
                             )
 
@@ -3031,7 +3036,7 @@ remainder7 context s =
                                                 Err "negative distance"
 
                                             else
-                                                Ok ( s4, distanceCode )
+                                                Ok ( s4, s4.distance, distanceCode )
 
                                         else
                                             let
@@ -3057,6 +3062,7 @@ remainder7 context s =
                                                     in
                                                     Ok
                                                         ( { s4 | distance = newDistance }
+                                                        , newDistance
                                                         , distanceCode
                                                         )
             in
@@ -3064,7 +3070,7 @@ remainder7 context s =
                 Err e ->
                     Err e
 
-                Ok ( s5, distanceCode ) ->
+                Ok ( s5, newDistance, distanceCode ) ->
                     let
                         newMaxDistance =
                             if s5.maxDistance /= s5.maxBackwardDistance && s5.pos < s5.maxBackwardDistance then
