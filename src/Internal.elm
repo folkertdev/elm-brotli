@@ -2407,16 +2407,16 @@ decompressHelp context s =
                     decompressHelp context newState
 
         7 ->
-            let
-                maybeLiteral state =
-                    if state.literalBlockLength == 0 then
-                        decodeLiteralBlockSwitch state
-
-                    else
-                        Ok { state | literalBlockLength = state.literalBlockLength - 1 }
-            in
             if s.trivialLiteralContext /= 0 then
                 let
+                    maybeLiteral state =
+                        if state.literalBlockLength == 0 then
+                            decodeLiteralBlockSwitch state
+
+                        else
+                            -- Ok { state | literalBlockLength = state.literalBlockLength - 1 }
+                            Ok state
+
                     go currentContext s0 =
                         if s0.j < s0.insertLength then
                             case maybeReadMoreInput 2030 s0 |> Result.map Tuple.first |> Result.andThen maybeLiteral |> Result.map topUpAccumulator of
@@ -2434,13 +2434,13 @@ decompressHelp context s =
                                                     s2.pos + 1
                                             in
                                             if newPos >= context.fence then
-                                                remainder7 context { s2 | nextRunningState = 7, runningState = 12, pos = s2.pos + 1, j = s2.j + 1, ringBuffer = newRingBuffer }
+                                                remainder7 context { s2 | nextRunningState = 7, runningState = 12, pos = s2.pos + 1, j = s2.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s2.literalBlockLength - 1 }
 
                                             else
-                                                go context (copyState7 newPos (s2.j + 1) newRingBuffer s2)
+                                                go context (copyState7 newPos (s2.j + 1) newRingBuffer (s2.literalBlockLength - 1) s2)
 
                         else
-                            remainder7 currentContext s0
+                            remainder7 currentContext { s0 | literalBlockLength = s0.literalBlockLength - 1 }
                 in
                 case go context s of
                     Err e ->
@@ -2628,7 +2628,7 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                 decodeLiteralBlockSwitch state
 
             else
-                Ok { state | literalBlockLength = state.literalBlockLength - 1 }
+                Ok state
     in
     if s0.j < s0.insertLength then
         case maybeReadMoreInput 2030 s0 |> Result.map Tuple.first |> Result.andThen maybeLiteral |> Result.map topUpAccumulator of
@@ -2673,11 +2673,10 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                                 s3.pos + 1
                         in
                         if newPos >= context.fence then
-                            remainder7 context { s3 | nextRunningState = 7, runningState = 12, pos = newPos, j = s3.j + 1, ringBuffer = newRingBuffer }
+                            remainder7 context { s3 | nextRunningState = 7, runningState = 12, pos = newPos, j = s3.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s3.literalBlockLength - 1 }
 
                         else
-                            -- { s3 | pos = newPos, j = s3.j + 1, ringBuffer = newRingBuffer }
-                            evaluateState7 context byte1 byte2 (copyState7 newPos (s3.j + 1) newRingBuffer s3)
+                            evaluateState7 context byte1 byte2 (copyState7 newPos (s3.j + 1) newRingBuffer (s3.literalBlockLength - 1) s3)
 
     else
         remainder7 context s0
@@ -3152,9 +3151,7 @@ decodeLiteralBlockSwitch s0 =
             Ok
                 { s1
                     | contextMapSlice = newContextMapSlice
-
-                    -- add - 1 to literalBlockLength here to prevent extra record update
-                    , literalBlockLength = literalBlockLength - 1
+                    , literalBlockLength = literalBlockLength
                     , literalTreeIdx = newLiteralTreeIdx
                     , contextLookupOffset1 = Bitwise.shiftLeftBy 9 contextMode
                     , contextLookupOffset2 = Bitwise.shiftLeftBy 9 contextMode + 256
@@ -3783,8 +3780,8 @@ updateBitOffset newBitOffset orig =
     }
 
 
-copyState7 : Int -> Int -> Array Int -> State -> State
-copyState7 newPos newJ newRingBuffer orig =
+copyState7 : Int -> Int -> Array Int -> Int -> State -> State
+copyState7 newPos newJ newRingBuffer literalBlockLength orig =
     { ringBuffer = newRingBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3811,7 +3808,7 @@ copyState7 newPos newJ newRingBuffer orig =
     , inputEnd = orig.inputEnd
     , isUncompressed = orig.isUncompressed
     , isMetadata = orig.isMetadata
-    , literalBlockLength = orig.literalBlockLength
+    , literalBlockLength = literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
     , numCommandBlockTypes = orig.numCommandBlockTypes
