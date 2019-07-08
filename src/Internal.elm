@@ -2359,7 +2359,8 @@ decompressHelp : Context -> Decoder Context
 decompressHelp context s =
     let
         _ =
-            log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+            -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+            log "state" s.runningState
 
         _ =
             if False then
@@ -2398,90 +2399,18 @@ decompressHelp context s =
                     decompressHelp context { s2 | runningState = 4 }
 
         4 ->
-            if s.metaBlockLength <= 0 then
-                decompressHelp context { s | runningState = 2 }
+            case evaluateState4 context s of
+                Err e ->
+                    Err e
 
-            else
-                case maybeReadMoreInput 2030 s of
-                    Err e ->
-                        Err e
-
-                    Ok ( s1, _ ) ->
-                        let
-                            maybeCommandBlock =
-                                if s1.commandBlockLength == 0 then
-                                    decodeCommandBlockSwitch s1
-
-                                else
-                                    Ok s1
-                        in
-                        case
-                            maybeCommandBlock
-                                |> Result.map
-                                    (\v ->
-                                        let
-                                            -- _ = log "before" ( ( v.pos, v.bitOffset, v.accumulator32 ), ( w.pos, w.bitOffset, w.accumulator32 ), ( v.halfOffset, Array.slice 0 20 v.shortBuffer ) )
-                                            w =
-                                                topUpAccumulator { v | commandBlockLength = v.commandBlockLength - 1 }
-                                        in
-                                        w
-                                    )
-                        of
-                            Err e ->
-                                Err e
-
-                            Ok s2 ->
-                                case readSymbol s2.commandTreeGroup s2.commandTreeIdx s2 of
-                                    ( s3, v ) ->
-                                        let
-                                            cmdCode =
-                                                Bitwise.shiftLeftBy 2 v
-
-                                            insertAndCopyExtraBits =
-                                                unsafeGet (cmdCode + 0) cmd_lookup
-
-                                            insertLengthOffset =
-                                                unsafeGet (cmdCode + 1) cmd_lookup
-
-                                            copyLengthOffset =
-                                                unsafeGet (cmdCode + 2) cmd_lookup
-
-                                            s4 =
-                                                { s3 | distanceCode = unsafeGet (cmdCode + 3) cmd_lookup }
-                                                    |> topUpAccumulator
-
-                                            readInsertLength state =
-                                                let
-                                                    extraBits =
-                                                        Bitwise.and insertAndCopyExtraBits 0xFF
-                                                in
-                                                readBits extraBits state
-                                                    |> Result.map
-                                                        (\( s_, w ) ->
-                                                            { s_ | insertLength = w + insertLengthOffset }
-                                                        )
-
-                                            readCopyLength state =
-                                                let
-                                                    extraBits =
-                                                        Bitwise.shiftRightBy 8 insertAndCopyExtraBits
-                                                in
-                                                readBits extraBits state
-                                                    |> Result.map (\( s_, w ) -> { s_ | copyLength = w + copyLengthOffset })
-                                        in
-                                        case readInsertLength s4 |> Result.andThen readCopyLength of
-                                            Err e ->
-                                                Err e
-
-                                            Ok s5 ->
-                                                decompressHelp context { s5 | j = 0, runningState = 7 }
+                Ok newState ->
+                    decompressHelp context newState
 
         7 ->
             let
                 maybeLiteral state =
                     if state.literalBlockLength == 0 then
                         decodeLiteralBlockSwitch state
-                            |> Result.map (\w -> { w | literalBlockLength = w.literalBlockLength - 1 })
 
                     else
                         Ok { state | literalBlockLength = state.literalBlockLength - 1 }
@@ -2501,14 +2430,14 @@ decompressHelp context s =
                                                 newRingBuffer =
                                                     Array.set s2.pos value s2.ringBuffer
 
-                                                s3 =
-                                                    { s2 | pos = s2.pos + 1, j = s2.j + 1, ringBuffer = newRingBuffer }
+                                                newPos =
+                                                    s2.pos + 1
                                             in
-                                            if s3.pos >= context.fence then
-                                                remainder7 context { s3 | nextRunningState = 7, runningState = 12 }
+                                            if newPos >= context.fence then
+                                                remainder7 context { s2 | nextRunningState = 7, runningState = 12, pos = s2.pos + 1, j = s2.j + 1, ringBuffer = newRingBuffer }
 
                                             else
-                                                go context s3
+                                                go context (copyState7 newPos (s2.j + 1) newRingBuffer s2)
 
                         else
                             remainder7 currentContext s0
@@ -2628,13 +2557,75 @@ decompressHelp context s =
             Ok ( s, context )
 
 
+evaluateState4 : Context -> State -> Result Error State
+evaluateState4 context s =
+    if s.metaBlockLength <= 0 then
+        Ok { s | runningState = 2 }
+
+    else
+        case maybeReadMoreInput 2030 s of
+            Err e ->
+                Err e
+
+            Ok ( s1, _ ) ->
+                let
+                    maybeCommandBlock =
+                        if s1.commandBlockLength == 0 then
+                            decodeCommandBlockSwitch s1
+
+                        else
+                            -- Ok { s1 | commandBlockLength = s1.commandBlockLength - 1 }
+                            Ok s1
+                in
+                case maybeCommandBlock |> Result.map topUpAccumulator of
+                    Err e ->
+                        Err e
+
+                    Ok s2 ->
+                        case readSymbol s2.commandTreeGroup s2.commandTreeIdx s2 of
+                            ( s3, v ) ->
+                                let
+                                    cmdCode =
+                                        Bitwise.shiftLeftBy 2 v
+
+                                    insertAndCopyExtraBits =
+                                        unsafeGet (cmdCode + 0) cmd_lookup
+
+                                    insertLengthOffset =
+                                        unsafeGet (cmdCode + 1) cmd_lookup
+
+                                    copyLengthOffset =
+                                        unsafeGet (cmdCode + 2) cmd_lookup
+
+                                    readInsertLength state =
+                                        let
+                                            extraBits =
+                                                Bitwise.and insertAndCopyExtraBits 0xFF
+                                        in
+                                        readBits extraBits state
+
+                                    readCopyLength ( state, insertLengthBits ) =
+                                        let
+                                            extraBits =
+                                                Bitwise.shiftRightBy 8 insertAndCopyExtraBits
+                                        in
+                                        readBits extraBits state
+                                            |> Result.map (\( s_, w ) -> ( s_, ( insertLengthBits, w ) ))
+                                in
+                                case s3 |> topUpAccumulator |> readInsertLength |> Result.andThen readCopyLength of
+                                    Err e ->
+                                        Err e
+
+                                    Ok ( s5, ( insertLengthBits, copyLengthBits ) ) ->
+                                        Ok (updateEvaluateState4 0 7 (copyLengthBits + copyLengthOffset) (insertLengthBits + insertLengthOffset) (unsafeGet (cmdCode + 3) cmd_lookup) (s3.commandBlockLength - 1) s5)
+
+
 evaluateState7 : Context -> Int -> Int -> State -> Result Error State
 evaluateState7 context prevByte1 prevByte2 s0 =
     let
         maybeLiteral state =
             if state.literalBlockLength == 0 then
                 decodeLiteralBlockSwitch state
-                    |> Result.map (\w -> { w | literalBlockLength = w.literalBlockLength - 1 })
 
             else
                 Ok { state | literalBlockLength = state.literalBlockLength - 1 }
@@ -2997,23 +2988,6 @@ remainder7 context s =
                     let
                         oldDistanceCode =
                             s1.distanceCode
-
-                        maybeDistance state =
-                            if state.distanceBlockLength == 0 then
-                                case decodeDistanceBlockSwitch state of
-                                    Err e ->
-                                        Err e
-
-                                    Ok ( w, r ) ->
-                                        Ok
-                                            { w
-                                                | distanceBlockLength = r.distanceBlockLength - 1
-                                                , distContextMapSlice = r.distContextMapSlice
-                                                , rings = r.rings
-                                            }
-
-                            else
-                                Ok { state | distanceBlockLength = state.distanceBlockLength - 1 }
                     in
                     if oldDistanceCode < 0 then
                         let
@@ -3021,12 +2995,27 @@ remainder7 context s =
                                 unsafeGet s1.distRbIdx s1.rings
                         in
                         Ok
-                            ( s1
-                            , newDistance
-                            , oldDistanceCode
-                            )
+                            { state = s1
+                            , distance = newDistance
+                            , distanceCode = oldDistanceCode
+                            , distanceBlockLength = s1.distanceBlockLength
+                            }
 
                     else
+                        let
+                            maybeDistance state =
+                                if state.distanceBlockLength == 0 then
+                                    case decodeDistanceBlockSwitch state of
+                                        Err e ->
+                                            Err e
+
+                                        Ok w ->
+                                            Ok w
+
+                                else
+                                    -- Ok { state | distanceBlockLength = state.distanceBlockLength - 1 }
+                                    Ok state
+                        in
                         case maybeReadMoreInput 2030 s1 |> Result.map Tuple.first |> Result.andThen maybeDistance |> Result.map topUpAccumulator of
                             Err e ->
                                 Err e
@@ -3051,7 +3040,7 @@ remainder7 context s =
                                                 Err "negative distance"
 
                                             else
-                                                Ok ( s3, newDistance, distanceCode )
+                                                Ok { state = s3, distance = newDistance, distanceCode = distanceCode, distanceBlockLength = s3.distanceBlockLength - 1 }
 
                                         else
                                             let
@@ -3075,52 +3064,64 @@ remainder7 context s =
                                                             unsafeGet distanceCode s4.distOffset
                                                                 + Bitwise.shiftLeftBy s4.distancePostfixBits bits
                                                     in
-                                                    Ok
-                                                        ( s4
-                                                        , newDistance
-                                                        , distanceCode
-                                                        )
+                                                    Ok { state = s4, distance = newDistance, distanceCode = distanceCode, distanceBlockLength = s4.distanceBlockLength - 1 }
             in
             case step1 of
                 Err e ->
                     Err e
 
-                Ok ( s5, newDistance, distanceCode ) ->
+                Ok new ->
                     let
+                        s5 =
+                            new.state
+
                         newMaxDistance =
-                            if newDistance /= s5.maxBackwardDistance && s5.pos < s5.maxBackwardDistance then
+                            if new.distance /= s5.maxBackwardDistance && s5.pos < s5.maxBackwardDistance then
                                 s5.pos
 
                             else
                                 s5.maxBackwardDistance
                     in
-                    if newDistance > newMaxDistance then
-                        Ok { s5 | runningState = 9, maxDistance = newMaxDistance, distance = newDistance }
+                    if new.distance > newMaxDistance then
+                        -- Ok { s5 | runningState = 9, maxDistance = newMaxDistance, distance = newDistance }
+                        Ok
+                            (updateRemainder7
+                                new.distance
+                                newMaxDistance
+                                new.distanceBlockLength
+                                s5.nextRunningState
+                                9
+                                s5.distRbIdx
+                                s5.rings
+                                s5
+                            )
 
                     else if s5.copyLength > s.metaBlockLength then
                         Err ("Invalid backward reference in remainder7 at position " ++ String.fromInt s5.pos)
 
-                    else if distanceCode > 0 then
+                    else if new.distanceCode > 0 then
                         let
                             distRbIdx =
                                 (s5.distRbIdx + 1) |> Bitwise.and 0x03
                         in
                         Ok
                             (updateRemainder7
-                                newDistance
+                                new.distance
                                 newMaxDistance
+                                new.distanceBlockLength
                                 0
                                 8
                                 distRbIdx
-                                (Array.set distRbIdx newDistance s5.rings)
+                                (Array.set distRbIdx new.distance s5.rings)
                                 s5
                             )
 
                     else
                         Ok
                             (updateRemainder7
-                                newDistance
+                                new.distance
                                 newMaxDistance
+                                new.distanceBlockLength
                                 0
                                 8
                                 s5.distRbIdx
@@ -3159,7 +3160,9 @@ decodeLiteralBlockSwitch s0 =
             Ok
                 { s1
                     | contextMapSlice = newContextMapSlice
-                    , literalBlockLength = literalBlockLength
+
+                    -- add - 1 to literalBlockLength here to prevent extra record update
+                    , literalBlockLength = literalBlockLength - 1
                     , literalTreeIdx = newLiteralTreeIdx
                     , contextLookupOffset1 = Bitwise.shiftLeftBy 9 contextMode
                     , contextLookupOffset2 = Bitwise.shiftLeftBy 9 contextMode + 256
@@ -3167,7 +3170,7 @@ decodeLiteralBlockSwitch s0 =
                 }
 
 
-decodeDistanceBlockSwitch : State -> Result Error ( State, { distanceBlockLength : Int, distContextMapSlice : Int, rings : Array Int } )
+decodeDistanceBlockSwitch : State -> Result Error State
 decodeDistanceBlockSwitch s0 =
     case decodeBlockTypeAndLength 2 s0.numDistanceBlockTypes s0 of
         Err e ->
@@ -3175,12 +3178,12 @@ decodeDistanceBlockSwitch s0 =
 
         Ok ( s1, newRings, v ) ->
             Ok
-                ( s1
-                , { distanceBlockLength = v
-                  , distContextMapSlice = Bitwise.shiftLeftBy 2 (unsafeGet 9 newRings)
-                  , rings = newRings
-                  }
-                )
+                { s1
+                  -- add  -1 to distanceBlockLength here to prevent extra record update
+                    | distanceBlockLength = v
+                    , distContextMapSlice = Bitwise.shiftLeftBy 2 (unsafeGet 9 newRings)
+                    , rings = newRings
+                }
 
 
 decodeCommandBlockSwitch s0 =
@@ -3796,8 +3799,8 @@ copyState7 newPos newJ newRingBuffer orig =
     }
 
 
-updateRemainder7 : Int -> Int -> Int -> Int -> Int -> Array Int -> State -> State
-updateRemainder7 distance maxDistance j runningState distRbIdx rings orig =
+updateRemainder7 : Int -> Int -> Int -> Int -> Int -> Int -> Array Int -> State -> State
+updateRemainder7 distance maxDistance distanceBlockLength j runningState distRbIdx rings orig =
     { ringBuffer = orig.ringBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3828,7 +3831,7 @@ updateRemainder7 distance maxDistance j runningState distRbIdx rings orig =
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
     , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
+    , distanceBlockLength = distanceBlockLength
     , numDistanceBlockTypes = orig.numDistanceBlockTypes
     , pos = orig.pos
     , maxDistance = maxDistance
@@ -3915,6 +3918,73 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , distancePostfixBits = orig.distancePostfixBits
     , distance = orig.distance
     , copyLength = orig.copyLength
+    , maxBackwardDistance = orig.maxBackwardDistance
+    , maxRingBufferSize = orig.maxRingBufferSize
+    , ringBufferSize = orig.ringBufferSize
+    , expectedTotalSize = orig.expectedTotalSize
+    , outputOffset = orig.outputOffset
+    , outputLength = orig.outputLength
+    , outputUsed = orig.outputUsed
+    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , ringBufferBytesReady = orig.ringBufferBytesReady
+    , isEager = orig.isEager
+    , isLargeWindow = orig.isLargeWindow
+    , input = orig.input
+    }
+
+
+updateEvaluateState4 : Int -> Int -> Int -> Int -> Int -> Int -> State -> State
+updateEvaluateState4 j runningState copyLength insertLength distanceCode commandBlockLength orig =
+    { ringBuffer = orig.ringBuffer
+    , contextModes = orig.contextModes
+    , contextMap = orig.contextMap
+    , distContextMap = orig.distContextMap
+    , distExtraBits = orig.distExtraBits
+    , output = orig.output
+    , byteBuffer = orig.byteBuffer
+    , shortBuffer = orig.shortBuffer
+    , intBuffer = orig.intBuffer
+    , rings = orig.rings
+    , blockTrees = orig.blockTrees
+    , literalTreeGroup = orig.literalTreeGroup
+    , commandTreeGroup = orig.commandTreeGroup
+    , distanceTreeGroup = orig.distanceTreeGroup
+    , distOffset = orig.distOffset
+    , runningState = runningState
+    , nextRunningState = orig.nextRunningState
+    , accumulator32 = orig.accumulator32
+    , bitOffset = orig.bitOffset
+    , halfOffset = orig.halfOffset
+    , tailBytes = orig.tailBytes
+    , endOfStreamReached = orig.endOfStreamReached
+    , metaBlockLength = orig.metaBlockLength
+    , inputEnd = orig.inputEnd
+    , isUncompressed = orig.isUncompressed
+    , isMetadata = orig.isMetadata
+    , literalBlockLength = orig.literalBlockLength
+    , numLiteralBlockTypes = orig.numLiteralBlockTypes
+    , commandBlockLength = commandBlockLength
+    , numCommandBlockTypes = orig.numCommandBlockTypes
+    , distanceBlockLength = orig.distanceBlockLength
+    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , pos = orig.pos
+    , maxDistance = orig.maxDistance
+    , distRbIdx = orig.distRbIdx
+    , trivialLiteralContext = orig.trivialLiteralContext
+    , literalTreeIdx = orig.literalTreeIdx
+    , commandTreeIdx = orig.commandTreeIdx
+    , j = j
+    , insertLength = insertLength
+    , contextMapSlice = orig.contextMapSlice
+    , distContextMapSlice = orig.distContextMapSlice
+    , contextLookupOffset1 = orig.contextLookupOffset1
+    , contextLookupOffset2 = orig.contextLookupOffset2
+    , distanceCode = distanceCode
+    , numDirectDistanceCodes = orig.numDirectDistanceCodes
+    , distancePostfixMask = orig.distancePostfixMask
+    , distancePostfixBits = orig.distancePostfixBits
+    , distance = orig.distance
+    , copyLength = copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
