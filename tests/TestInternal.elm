@@ -93,6 +93,7 @@ wholePipeline =
         , pipeline "more icelandic" "fóru aftur um haustið til Færeyja; og er þeir sigldu af landinu, féll snær mikill á\n" [ 27, 90, 0, 248, 141, 212, 81, 141, 203, 221, 204, 182, 117, 74, 250, 235, 134, 102, 183, 244, 221, 193, 240, 117, 224, 221, 96, 193, 158, 7, 27, 99, 103, 109, 143, 208, 11, 250, 149, 36, 48, 197, 14, 171, 230, 60, 32, 186, 195, 17, 3, 183, 196, 218, 204, 98, 211, 112, 165, 222, 254, 71, 78, 124, 29, 205, 145, 111, 116, 44, 118, 171, 1, 81, 152, 204, 202, 25, 7, 52, 99, 134, 53, 83, 199, 224, 75, 51, 20 ]
         , pipeline32 "paragraph1" paragraph1Text paragraph1Bytes
         , pipeline "paragraph2" "GRINNELL FORMATION.\nBecause of \n" [ 27, 31, 0, 248, 141, 212, 70, 247, 82, 178, 148, 10, 71, 82, 93, 148, 196, 228, 36, 21, 249, 5, 153, 98, 200, 168, 180, 79, 253, 203, 195, 11 ]
+        {-
         , test "sanity" <|
             \_ ->
                 let
@@ -101,6 +102,7 @@ wholePipeline =
                 in
                 Internal.topUpAccumulator { pos = 10864, bitOffset = 18, accumulator32 = 972105375, shortBuffer = shortBuffer, halfOffset = 17 }
                     |> Expect.equal { pos = 10864, bitOffset = 2, accumulator32 = -1174980111, shortBuffer = shortBuffer, halfOffset = 18 }
+        -}
 
         -- , pipeline "generated" Generated.text Generated.bytes
         , 
@@ -175,6 +177,7 @@ bug2 =
             \_ ->
                 Internal.calculateDistanceAlphabetSize 0 0 24
                     |> Expect.equal 64
+                    {-
         , test "readComplexHuffmanCodeHelp" <|
             \_ ->
                 let
@@ -206,6 +209,7 @@ bug2 =
             \_ ->
                 Internal.readFewBits 2 { accumulator32 = 3508, bitOffset = 9 }
                     |> Expect.equal (Ok ( { accumulator32 = 3508, bitOffset = 11 }, 2 ))
+                -}
         , test "buildHuffmanTable" <|
             \_ ->
                 let
