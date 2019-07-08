@@ -6,11 +6,12 @@ Brotli is a compression algorithm much like the one zip archives use, but better
 This package decodes `Bytes` sequences that are compressed with the brotli algorithm: 
 
 ```elm
-import Bytes exposing Bytes
+import Bytes exposing (Bytes)
 import Bytes.Encode as Encode
+import Bytes.Decode as Decode
 import Brotli
 
-bytes : List String
+bytes : List Int
 bytes = 
     [ 27, 14, 0, 248, 37, 20, 82, 144, 66, 20, 169, 91, 100, 234, 20, 193 ]
 
@@ -21,9 +22,11 @@ buffer =
         |> Encode.sequence
         |> Encode.encode
 
-
-Brotli.decode buffer 
-    --> Ok "this is a test\n" 
+result = 
+    Brotli.decode buffer 
+        |> Result.toMaybe
+        |> Maybe.andThen (\v -> Decode.decode (Decode.string (Bytes.width v)) v)
+        --> "this is a test\n"            
 ```
 
 ## Technical details 
