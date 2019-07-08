@@ -740,7 +740,7 @@ maybeReallocateRingBuffer s =
         Ok { s | ringBuffer = newBuffer, ringBufferSize = newSize }
 
 
-decodeMetaBlockBytes : Decoder ()
+decodeMetaBlockBytes : State -> Result Error State
 decodeMetaBlockBytes s_ =
     let
         byteLoop i sizeBytes state_ =
@@ -756,7 +756,7 @@ decodeMetaBlockBytes s_ =
                                     byteLoop (i + 1) sizeBytes { s2 | metaBlockLength = Bitwise.or s2.metaBlockLength (Bitwise.shiftLeftBy (i * 8) bits) }
 
             else
-                Ok ( state_, () )
+                Ok state_
 
         s =
             { s_ | isMetadata = True }
@@ -770,13 +770,13 @@ decodeMetaBlockBytes s_ =
                 case readFewBits 2 s1 of
                     ( s2, sizeBytes ) ->
                         if sizeBytes == 0 then
-                            Ok ( s2, () )
+                            Ok s2
 
                         else
                             byteLoop 0 sizeBytes s2
 
 
-decodeMetaBlockNibbles : Int -> Decoder ()
+decodeMetaBlockNibbles : Int -> State -> Result Error State
 decodeMetaBlockNibbles numberOfNibbles s =
     let
         nibbleLoop i sizeNibbles state_ =
@@ -792,7 +792,7 @@ decodeMetaBlockNibbles numberOfNibbles s =
                                     nibbleLoop (i + 1) sizeNibbles { s2 | metaBlockLength = Bitwise.or s2.metaBlockLength (Bitwise.shiftLeftBy (i * 4) bits) }
 
             else
-                Ok ( state_, () )
+                Ok state_
     in
     nibbleLoop 0 numberOfNibbles s
 
@@ -837,7 +837,7 @@ decodeMetaBlockLength s_ =
                                 Err e ->
                                     Err e
 
-                                Ok ( s6, _ ) ->
+                                Ok s6 ->
                                     let
                                         s7 =
                                             { s6 | metaBlockLength = s6.metaBlockLength + 1 }
@@ -1784,7 +1784,7 @@ readBlocks s0 =
         |> Result.andThen readDistanceBlock
 
 
-readMetablockHuffmanCodesAndContextMaps : Decoder ()
+readMetablockHuffmanCodesAndContextMaps : State -> Result Error State
 readMetablockHuffmanCodesAndContextMaps =
     let
         topUp s =
@@ -1959,7 +1959,7 @@ readMetablockHuffmanCodesAndContextMaps =
                                                                                             |> Array.set 9 0
                                                                                 }
                                                                         in
-                                                                        Ok ( s9, () )
+                                                                        Ok s9
                                                             )
                                         )
                     )
@@ -2308,7 +2308,7 @@ decompressHelp context s =
                 Err e ->
                     Err e
 
-                Ok ( s2, _ ) ->
+                Ok s2 ->
                     decompressHelp context { s2 | runningState = 4 }
 
         4 ->
