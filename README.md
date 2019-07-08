@@ -26,7 +26,7 @@ result =
     Brotli.decode buffer 
         |> Result.toMaybe
         |> Maybe.andThen (\v -> Decode.decode (Decode.string (Bytes.width v)) v)
-        --> "this is a test\n"            
+        --> Just "this is a test\n"            
 ```
 
 ## Technical details 
