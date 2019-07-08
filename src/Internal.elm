@@ -519,7 +519,6 @@ prepare unverified =
         s =
             if unverified.halfOffset > 2030 then
                 doReadMoreInput unverified
-                    |> Result.map Tuple.first
 
             else
                 Ok unverified
@@ -616,17 +615,15 @@ andThen f x =
                 f v s2
 
 
-readNextMetablockHeader : Decoder ()
+readNextMetablockHeader : State -> Result Error State
 readNextMetablockHeader =
     \s ->
         if s.inputEnd then
             Ok
-                ( { s
+                { s
                     | nextRunningState = 10
                     , runningState = 12
-                  }
-                , ()
-                )
+                }
 
         else
             let
@@ -638,11 +635,11 @@ readNextMetablockHeader =
                     }
             in
             maybeReadMoreInput 2030 s2
-                |> Result.andThen (\( state, _ ) -> decodeMetaBlockLength state)
+                |> Result.andThen (\state -> decodeMetaBlockLength state)
                 |> Result.andThen
-                    (\( s4, _ ) ->
+                    (\s4 ->
                         if s4.metaBlockLength == 0 && s4.isMetadata == False then
-                            Ok ( s4, () )
+                            Ok s4
 
                         else
                             (if s4.isUncompressed || s4.isMetadata then
@@ -652,24 +649,22 @@ readNextMetablockHeader =
 
                                     Ok ( s5, _ ) ->
                                         Ok
-                                            ( { s5
+                                            { s5
                                                 | runningState =
                                                     if s5.isMetadata then
                                                         5
 
                                                     else
                                                         6
-                                              }
-                                            , ()
-                                            )
+                                            }
 
                              else
-                                Ok ( { s4 | runningState = 3 }, () )
+                                Ok { s4 | runningState = 3 }
                             )
                                 |> Result.andThen
-                                    (\( s6, _ ) ->
+                                    (\s6 ->
                                         if s6.isMetadata then
-                                            Ok ( s6, () )
+                                            Ok s6
 
                                         else
                                             let
@@ -690,12 +685,12 @@ readNextMetablockHeader =
                                                 maybeReallocateRingBuffer s7
 
                                             else
-                                                Ok ( s7, () )
+                                                Ok s7
                                     )
                     )
 
 
-maybeReallocateRingBuffer : Decoder ()
+maybeReallocateRingBuffer : State -> Result Error State
 maybeReallocateRingBuffer s =
     let
         newSize =
@@ -728,7 +723,7 @@ maybeReallocateRingBuffer s =
                 initialSize
     in
     if newSize < s.ringBufferSize then
-        Ok ( s, () )
+        Ok s
 
     else
         let
@@ -742,7 +737,7 @@ maybeReallocateRingBuffer s =
                 else
                     Array.append (Array.slice 0 s.ringBufferSize s.ringBuffer) (Array.repeat (ringBufferSizeWithSlack - s.ringBufferSize) 0)
         in
-        Ok ( { s | ringBuffer = newBuffer, ringBufferSize = newSize }, () )
+        Ok { s | ringBuffer = newBuffer, ringBufferSize = newSize }
 
 
 decodeMetaBlockBytes : Decoder ()
@@ -802,7 +797,7 @@ decodeMetaBlockNibbles numberOfNibbles s =
     nibbleLoop 0 numberOfNibbles s
 
 
-decodeMetaBlockLength : Decoder ()
+decodeMetaBlockLength : State -> Result Error State
 decodeMetaBlockLength s_ =
     let
         s__ =
@@ -850,16 +845,16 @@ decodeMetaBlockLength s_ =
                                     if s7.inputEnd == False then
                                         case readFewBits 1 s7 of
                                             ( s8, uncompressed ) ->
-                                                Ok ( { s8 | isUncompressed = uncompressed == 1 }, () )
+                                                Ok { s8 | isUncompressed = uncompressed == 1 }
 
                                     else
-                                        Ok ( s7, () )
+                                        Ok s7
             in
             if s.inputEnd then
                 case readFewBits 1 s of
                     ( s1, bit ) ->
                         if bit /= 0 then
-                            Ok ( s1, () )
+                            Ok s1
 
                         else
                             continue s1
@@ -1043,7 +1038,7 @@ readHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s_ =
     let
         checkEnoughRead =
             maybeReadMoreInput 2030 s_
-                |> Result.map (Tuple.first >> topUpAccumulator)
+                |> Result.map topUpAccumulator
     in
     case checkEnoughRead of
         Err e ->
@@ -1148,7 +1143,7 @@ readHuffmanCodeLengths codeLengthCodeLengths numSymbols initialCodeLengths state
             -> Result Error ( State, ( Array Int, Int, Int ) )
         go table symbol space repeat repeatCodeLen prevCodeLen codeLengths s =
             if symbol < numSymbols && space > 0 then
-                case maybeReadMoreInput 2030 s |> Result.map (Tuple.first >> topUpAccumulator) of
+                case maybeReadMoreInput 2030 s |> Result.map topUpAccumulator of
                     Err e ->
                         Err e
 
@@ -1794,7 +1789,7 @@ readMetablockHuffmanCodesAndContextMaps =
     let
         topUp s =
             maybeReadMoreInput 2030 s
-                |> Result.map (Tuple.first >> topUpAccumulator)
+                |> Result.map topUpAccumulator
 
         readContextModes : Decoder (Array Int)
         readContextModes state =
@@ -1814,7 +1809,7 @@ readMetablockHuffmanCodesAndContextMaps =
                                     Err e ->
                                         Err e
 
-                                    Ok ( newerS, _ ) ->
+                                    Ok newerS ->
                                         go1 newI newerS newAcc
 
                     else
@@ -1994,7 +1989,7 @@ decodeContextMap contextMapSize contextMap s0 =
         Err e ->
             Err e
 
-        Ok ( s1, _ ) ->
+        Ok s1 ->
             case decodeVarLenUnsignedByte s1 of
                 ( s2, v ) ->
                     let
@@ -2037,7 +2032,7 @@ decodeContextMap contextMapSize contextMap s0 =
 
                                             go i currentContextMap s =
                                                 if i < contextMapSize then
-                                                    case maybeReadMoreInput 2030 s |> Result.map (Tuple.first >> topUpAccumulator) |> Result.map (readSymbol table.tableGroup tableIdx) of
+                                                    case maybeReadMoreInput 2030 s |> Result.map (topUpAccumulator >> readSymbol table.tableGroup tableIdx) of
                                                         Err e ->
                                                             Err e
 
@@ -2300,7 +2295,7 @@ decompressHelp context s =
                     Err e ->
                         Err e
 
-                    Ok ( s2, _ ) ->
+                    Ok s2 ->
                         case calculateFence s2 of
                             Err e ->
                                 Err e
@@ -2336,7 +2331,7 @@ decompressHelp context s =
 
                     go currentContext s0 =
                         if s0.j < s0.insertLength then
-                            case maybeReadMoreInput 2030 s0 |> Result.map (Tuple.first >> maybeLiteral >> topUpAccumulator) of
+                            case maybeReadMoreInput 2030 s0 |> Result.map (maybeLiteral >> topUpAccumulator) of
                                 Err e ->
                                     Err e
 
@@ -2484,7 +2479,7 @@ evaluateState4 context s =
             Err e ->
                 Err e
 
-            Ok ( s1, _ ) ->
+            Ok s1 ->
                 let
                     maybeCommandBlock =
                         if s1.commandBlockLength == 0 then
@@ -2542,7 +2537,7 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                 state
     in
     if s0.j < s0.insertLength then
-        case maybeReadMoreInput 2030 s0 |> Result.map (Tuple.first >> maybeLiteral >> topUpAccumulator) of
+        case maybeReadMoreInput 2030 s0 |> Result.map (maybeLiteral >> topUpAccumulator) of
             Err e ->
                 Err e
 
@@ -2909,7 +2904,7 @@ remainder7 context s =
                                 else
                                     state
                         in
-                        case maybeReadMoreInput 2030 s1 |> Result.map (Tuple.first >> maybeDistance >> topUpAccumulator) of
+                        case maybeReadMoreInput 2030 s1 |> Result.map (maybeDistance >> topUpAccumulator) of
                             Err e ->
                                 Err e
 
@@ -3291,25 +3286,20 @@ type alias ReadInputState s =
     }
 
 
-maybeReadMoreInput : Int -> ReadInputState s -> Result Error ( ReadInputState s, () )
+maybeReadMoreInput : Int -> ReadInputState s -> Result Error (ReadInputState s)
 maybeReadMoreInput n s =
     if s.halfOffset > n then
-        case doReadMoreInput s of
-            Err e ->
-                Err e
-
-            Ok ( s2, _ ) ->
-                Ok ( s2, () )
+        doReadMoreInput s
 
     else
-        Ok ( s, () )
+        Ok s
 
 
-doReadMoreInput : ReadInputState s -> Result Error ( ReadInputState s, () )
+doReadMoreInput : ReadInputState s -> Result Error (ReadInputState s)
 doReadMoreInput s =
     if s.endOfStreamReached then
         if halfAvailable s >= -2 then
-            Ok ( s, () )
+            Ok s
 
         else
             Err "No more inupt"
@@ -3327,7 +3317,7 @@ doReadMoreInput s =
                 Err e
 
             Ok ( s2, bytesInBuffer2 ) ->
-                Ok ( bytesToNibbles bytesInBuffer2 s2, () )
+                Ok (bytesToNibbles bytesInBuffer2 s2)
 
 
 doReadMoreInputHelp :
