@@ -2332,12 +2332,11 @@ decompressHelp context s =
                             decodeLiteralBlockSwitch state
 
                         else
-                            -- Ok { state | literalBlockLength = state.literalBlockLength - 1 }
-                            Ok state
+                            state
 
                     go currentContext s0 =
                         if s0.j < s0.insertLength then
-                            case maybeReadMoreInput 2030 s0 |> Result.map Tuple.first |> Result.andThen maybeLiteral |> Result.map topUpAccumulator of
+                            case maybeReadMoreInput 2030 s0 |> Result.map (Tuple.first >> maybeLiteral >> topUpAccumulator) of
                                 Err e ->
                                     Err e
 
@@ -2493,13 +2492,10 @@ evaluateState4 context s =
 
                         else
                             -- Ok { s1 | commandBlockLength = s1.commandBlockLength - 1 }
-                            Ok s1
+                            s1
                 in
-                case maybeCommandBlock |> Result.map topUpAccumulator of
-                    Err e ->
-                        Err e
-
-                    Ok s2 ->
+                case maybeCommandBlock |> topUpAccumulator of
+                    s2 ->
                         case readSymbol s2.commandTreeGroup s2.commandTreeIdx s2 of
                             ( s3, v ) ->
                                 let
@@ -2543,10 +2539,10 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                 decodeLiteralBlockSwitch state
 
             else
-                Ok state
+                state
     in
     if s0.j < s0.insertLength then
-        case maybeReadMoreInput 2030 s0 |> Result.map Tuple.first |> Result.andThen maybeLiteral |> Result.map topUpAccumulator of
+        case maybeReadMoreInput 2030 s0 |> Result.map (Tuple.first >> maybeLiteral >> topUpAccumulator) of
             Err e ->
                 Err e
 
@@ -2908,17 +2904,12 @@ remainder7 context s =
                         let
                             maybeDistance state =
                                 if state.distanceBlockLength == 0 then
-                                    case decodeDistanceBlockSwitch state of
-                                        Err e ->
-                                            Err e
-
-                                        Ok w ->
-                                            Ok w
+                                    decodeDistanceBlockSwitch state
 
                                 else
-                                    Ok state
+                                    state
                         in
-                        case maybeReadMoreInput 2030 s1 |> Result.map Tuple.first |> Result.andThen maybeDistance |> Result.map topUpAccumulator of
+                        case maybeReadMoreInput 2030 s1 |> Result.map (Tuple.first >> maybeDistance >> topUpAccumulator) of
                             Err e ->
                                 Err e
 
@@ -3045,12 +3036,10 @@ remainder7 context s =
                             )
 
 
+decodeLiteralBlockSwitch : State -> State
 decodeLiteralBlockSwitch s0 =
     case decodeBlockTypeAndLength 0 s0.numLiteralBlockTypes s0 of
-        Err e ->
-            Err e
-
-        Ok ( s1, newRings, literalBlockLength ) ->
+        ( s1, newRings, literalBlockLength ) ->
             let
                 literalBlockType =
                     unsafeGet 5 newRings
@@ -3064,47 +3053,39 @@ decodeLiteralBlockSwitch s0 =
                 newLiteralTreeIdx =
                     Bitwise.and (unsafeGet newContextMapSlice s1.contextMap) 0xFF
             in
-            Ok
-                { s1
-                    | contextMapSlice = newContextMapSlice
-                    , literalBlockLength = literalBlockLength
-                    , literalTreeIdx = newLiteralTreeIdx
-                    , contextLookupOffset1 = Bitwise.shiftLeftBy 9 contextMode
-                    , contextLookupOffset2 = Bitwise.shiftLeftBy 9 contextMode + 256
-                    , rings = newRings
-                }
+            { s1
+                | contextMapSlice = newContextMapSlice
+                , literalBlockLength = literalBlockLength
+                , literalTreeIdx = newLiteralTreeIdx
+                , contextLookupOffset1 = Bitwise.shiftLeftBy 9 contextMode
+                , contextLookupOffset2 = Bitwise.shiftLeftBy 9 contextMode + 256
+                , rings = newRings
+            }
 
 
-decodeDistanceBlockSwitch : State -> Result Error State
+decodeDistanceBlockSwitch : State -> State
 decodeDistanceBlockSwitch s0 =
     case decodeBlockTypeAndLength 2 s0.numDistanceBlockTypes s0 of
-        Err e ->
-            Err e
-
-        Ok ( s1, newRings, v ) ->
-            Ok
-                { s1
-                  -- add  -1 to distanceBlockLength here to prevent extra record update
-                    | distanceBlockLength = v
-                    , distContextMapSlice = Bitwise.shiftLeftBy 2 (unsafeGet 9 newRings)
-                    , rings = newRings
-                }
+        ( s1, newRings, v ) ->
+            { s1
+              -- add  -1 to distanceBlockLength here to prevent extra record update
+                | distanceBlockLength = v
+                , distContextMapSlice = Bitwise.shiftLeftBy 2 (unsafeGet 9 newRings)
+                , rings = newRings
+            }
 
 
 decodeCommandBlockSwitch s0 =
     case decodeBlockTypeAndLength 1 s0.numCommandBlockTypes s0 of
-        Err e ->
-            Err e
-
-        Ok ( s1, newRings, v ) ->
-            Ok
-                { s1
-                    | commandBlockLength = v
-                    , commandTreeIdx = unsafeGet 7 newRings
-                    , rings = newRings
-                }
+        ( s1, newRings, v ) ->
+            { s1
+                | commandBlockLength = v
+                , commandTreeIdx = unsafeGet 7 newRings
+                , rings = newRings
+            }
 
 
+decodeBlockTypeAndLength : Int -> Int -> State -> ( State, Array Int, Int )
 decodeBlockTypeAndLength treeType numBlockTypes s0 =
     let
         offset =
@@ -3137,13 +3118,12 @@ decodeBlockTypeAndLength treeType numBlockTypes s0 =
                                             v
                                    )
                     in
-                    Ok
-                        ( s3
-                        , s3.rings
-                            |> Array.set offset (unsafeGet (offset + 1) s3.rings)
-                            |> Array.set (offset + 1) blockType
-                        , result
-                        )
+                    ( s3
+                    , s3.rings
+                        |> Array.set offset (unsafeGet (offset + 1) s3.rings)
+                        |> Array.set (offset + 1) blockType
+                    , result
+                    )
 
 
 calculateFence : State -> Result Error ( State, Int )
