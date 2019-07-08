@@ -2737,21 +2737,6 @@ evaluateState8 context s =
                 s.runningState
             )
             s
-        {-
-           { s
-               | ringBuffer = newRingBuffer
-               , j = s.j + copyLength
-               , metaBlockLength = s.metaBlockLength - copyLength
-               , pos = s.pos + copyLength
-               , runningState =
-                   if s.runningState == 8 then
-                       4
-
-
-                   else
-                       s.runningState
-           }
-        -}
 
     else
         -- NOTE this branch is untested; seems to almost never get hit
@@ -2975,11 +2960,14 @@ remainder7 context s =
             s0 =
                 s
 
+            newMetaBlockLength =
+                s0.metaBlockLength - s0.insertLength
+
             s1 =
-                { s0 | metaBlockLength = s0.metaBlockLength - s0.insertLength }
+                s0
         in
-        if s1.metaBlockLength <= 0 then
-            Ok { s1 | runningState = 4 }
+        if newMetaBlockLength <= 0 then
+            Ok { s1 | runningState = 4, metaBlockLength = newMetaBlockLength }
 
         else
             let
@@ -2998,6 +2986,7 @@ remainder7 context s =
                             , distance = newDistance
                             , distanceCode = oldDistanceCode
                             , distanceBlockLength = s1.distanceBlockLength
+                            , metaBlockLength = newMetaBlockLength
                             }
 
                     else
@@ -3012,7 +3001,6 @@ remainder7 context s =
                                             Ok w
 
                                 else
-                                    -- Ok { state | distanceBlockLength = state.distanceBlockLength - 1 }
                                     Ok state
                         in
                         case maybeReadMoreInput 2030 s1 |> Result.map Tuple.first |> Result.andThen maybeDistance |> Result.map topUpAccumulator of
@@ -3039,7 +3027,13 @@ remainder7 context s =
                                                 Err "negative distance"
 
                                             else
-                                                Ok { state = s3, distance = newDistance, distanceCode = distanceCode, distanceBlockLength = s3.distanceBlockLength - 1 }
+                                                Ok
+                                                    { state = s3
+                                                    , distance = newDistance
+                                                    , distanceCode = distanceCode
+                                                    , distanceBlockLength = s3.distanceBlockLength - 1
+                                                    , metaBlockLength = newMetaBlockLength
+                                                    }
 
                                         else
                                             let
@@ -3063,7 +3057,13 @@ remainder7 context s =
                                                             unsafeGet distanceCode s4.distOffset
                                                                 + Bitwise.shiftLeftBy s4.distancePostfixBits bits
                                                     in
-                                                    Ok { state = s4, distance = newDistance, distanceCode = distanceCode, distanceBlockLength = s4.distanceBlockLength - 1 }
+                                                    Ok
+                                                        { state = s4
+                                                        , distance = newDistance
+                                                        , distanceCode = distanceCode
+                                                        , distanceBlockLength = s4.distanceBlockLength - 1
+                                                        , metaBlockLength = newMetaBlockLength
+                                                        }
             in
             case step1 of
                 Err e ->
@@ -3074,6 +3074,7 @@ remainder7 context s =
                         s5 =
                             new.state
 
+                        -- new.state
                         newMaxDistance =
                             if new.distance /= s5.maxBackwardDistance && s5.pos < s5.maxBackwardDistance then
                                 s5.pos
@@ -3088,6 +3089,7 @@ remainder7 context s =
                                 new.distance
                                 newMaxDistance
                                 new.distanceBlockLength
+                                new.metaBlockLength
                                 s5.nextRunningState
                                 9
                                 s5.distRbIdx
@@ -3108,6 +3110,7 @@ remainder7 context s =
                                 new.distance
                                 newMaxDistance
                                 new.distanceBlockLength
+                                new.metaBlockLength
                                 0
                                 8
                                 distRbIdx
@@ -3121,6 +3124,7 @@ remainder7 context s =
                                 new.distance
                                 newMaxDistance
                                 new.distanceBlockLength
+                                new.metaBlockLength
                                 0
                                 8
                                 s5.distRbIdx
@@ -3472,7 +3476,13 @@ doReadMoreInputHelp bytesInBuffer s =
 -}
 copyWithin : Int -> Int -> Int -> Array a -> Array a
 copyWithin destination sourceStart sourceEnd arr =
-    if sourceStart == sourceEnd then
+    {- If the source and target area don't overlap, we can slice it out and append it back in. That is faster.
+
+    -}
+    if destination >= sourceStart && destination < sourceEnd then
+        setArraySlice (Array.slice sourceStart sourceEnd arr) destination arr
+
+    else if sourceStart == sourceEnd then
         arr
 
     else
@@ -3847,8 +3857,8 @@ copyState7 newPos newJ newRingBuffer literalBlockLength orig =
     }
 
 
-updateRemainder7 : Int -> Int -> Int -> Int -> Int -> Int -> Array Int -> State -> State
-updateRemainder7 distance maxDistance distanceBlockLength j runningState distRbIdx rings orig =
+updateRemainder7 : Int -> Int -> Int -> Int -> Int -> Int -> Int -> Array Int -> State -> State
+updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runningState distRbIdx rings orig =
     { ringBuffer = orig.ringBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3871,7 +3881,7 @@ updateRemainder7 distance maxDistance distanceBlockLength j runningState distRbI
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , endOfStreamReached = orig.endOfStreamReached
-    , metaBlockLength = orig.metaBlockLength
+    , metaBlockLength = metaBlockLength
     , inputEnd = orig.inputEnd
     , isUncompressed = orig.isUncompressed
     , isMetadata = orig.isMetadata
