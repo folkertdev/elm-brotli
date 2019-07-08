@@ -2735,18 +2735,33 @@ evaluateState8 context s =
                 else
                     copyWithin dst src srcEnd s.ringBuffer
         in
-        { s
-            | ringBuffer = newRingBuffer
-            , j = s.j + copyLength
-            , metaBlockLength = s.metaBlockLength - copyLength
-            , pos = s.pos + copyLength
-            , runningState =
-                if s.runningState == 8 then
-                    4
+        updateEvaluateState8
+            newRingBuffer
+            (s.j + copyLength)
+            (s.metaBlockLength - copyLength)
+            (s.pos + copyLength)
+            (if s.runningState == 8 then
+                4
 
-                else
-                    s.runningState
-        }
+             else
+                s.runningState
+            )
+            s
+        {-
+           { s
+               | ringBuffer = newRingBuffer
+               , j = s.j + copyLength
+               , metaBlockLength = s.metaBlockLength - copyLength
+               , pos = s.pos + copyLength
+               , runningState =
+                   if s.runningState == 8 then
+                       4
+
+
+                   else
+                       s.runningState
+           }
+        -}
 
     else
         -- NOTE this branch is untested; seems to almost never get hit
@@ -3832,6 +3847,73 @@ updateRemainder7 distance maxDistance j runningState distRbIdx rings orig =
     , distancePostfixMask = orig.distancePostfixMask
     , distancePostfixBits = orig.distancePostfixBits
     , distance = distance
+    , copyLength = orig.copyLength
+    , maxBackwardDistance = orig.maxBackwardDistance
+    , maxRingBufferSize = orig.maxRingBufferSize
+    , ringBufferSize = orig.ringBufferSize
+    , expectedTotalSize = orig.expectedTotalSize
+    , outputOffset = orig.outputOffset
+    , outputLength = orig.outputLength
+    , outputUsed = orig.outputUsed
+    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , ringBufferBytesReady = orig.ringBufferBytesReady
+    , isEager = orig.isEager
+    , isLargeWindow = orig.isLargeWindow
+    , input = orig.input
+    }
+
+
+updateEvaluateState8 : Array Int -> Int -> Int -> Int -> Int -> State -> State
+updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
+    { ringBuffer = ringBuffer
+    , contextModes = orig.contextModes
+    , contextMap = orig.contextMap
+    , distContextMap = orig.distContextMap
+    , distExtraBits = orig.distExtraBits
+    , output = orig.output
+    , byteBuffer = orig.byteBuffer
+    , shortBuffer = orig.shortBuffer
+    , intBuffer = orig.intBuffer
+    , rings = orig.rings
+    , blockTrees = orig.blockTrees
+    , literalTreeGroup = orig.literalTreeGroup
+    , commandTreeGroup = orig.commandTreeGroup
+    , distanceTreeGroup = orig.distanceTreeGroup
+    , distOffset = orig.distOffset
+    , runningState = runningState
+    , nextRunningState = orig.nextRunningState
+    , accumulator32 = orig.accumulator32
+    , bitOffset = orig.bitOffset
+    , halfOffset = orig.halfOffset
+    , tailBytes = orig.tailBytes
+    , endOfStreamReached = orig.endOfStreamReached
+    , metaBlockLength = metaBlockLength
+    , inputEnd = orig.inputEnd
+    , isUncompressed = orig.isUncompressed
+    , isMetadata = orig.isMetadata
+    , literalBlockLength = orig.literalBlockLength
+    , numLiteralBlockTypes = orig.numLiteralBlockTypes
+    , commandBlockLength = orig.commandBlockLength
+    , numCommandBlockTypes = orig.numCommandBlockTypes
+    , distanceBlockLength = orig.distanceBlockLength
+    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , pos = pos
+    , maxDistance = orig.maxDistance
+    , distRbIdx = orig.distRbIdx
+    , trivialLiteralContext = orig.trivialLiteralContext
+    , literalTreeIdx = orig.literalTreeIdx
+    , commandTreeIdx = orig.commandTreeIdx
+    , j = j
+    , insertLength = orig.insertLength
+    , contextMapSlice = orig.contextMapSlice
+    , distContextMapSlice = orig.distContextMapSlice
+    , contextLookupOffset1 = orig.contextLookupOffset1
+    , contextLookupOffset2 = orig.contextLookupOffset2
+    , distanceCode = orig.distanceCode
+    , numDirectDistanceCodes = orig.numDirectDistanceCodes
+    , distancePostfixMask = orig.distancePostfixMask
+    , distancePostfixBits = orig.distancePostfixBits
+    , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
     , maxRingBufferSize = orig.maxRingBufferSize
