@@ -18,6 +18,10 @@ dictionary_offsets_by_length =
     Array.fromList [ 0, 0, 0, 0, 0, 4096, 9216, 21504, 35840, 44032, 53248, 63488, 74752, 87040, 93696, 100864, 104704, 106752, 108928, 113536, 115968, 118528, 119872, 121280, 122016 ]
 
 
+dictionary_data =
+        unpackDictionaryData DictionaryData.data0 DictionaryData.data1 
+
+
 dictionary_size_bits_by_length =
     Array.fromList [ 0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5 ]
 
@@ -63,26 +67,28 @@ toUsAsciiBytes str =
         |> Maybe.withDefault Array.empty
 
 
-dictionary_data =
-    unpackDictionaryData DictionaryData.data0 DictionaryData.data1 DictionaryData.skipFlip
 
+skipFlipAlt = 
+    Array.fromList [1783,37,396,39,84,37,133,39,87,37,215,37,79,37,103,37,166,38,403,37,485,38,62,38,42,38,39,38,94,38,136,376,3134,38,429,38,402,38,41,38,94,38,37,38,39,38,130,38,80,38,49,38,177,38,51,38,93,38,109,38,117,38,69,38,116,38,67,38,207,38,86,38,86,38,47,38,62,38,54,38,3958,6012,111,38,112,38,64,38,69,38,77,38,80,38,120,38,64,38,70,38,101,38,204,38,55,38,58,38,40,38,68,38,48,38,67,38,41,38,46,38,70,38,45,38,49,38,40,38,76,38,70,38,49,606,42,1002,8691,38,4978,38,75,38,59,38,41,38,69,38,72,38,80,38,48,38,63,38,57,38,86,38,129,38,45,38,118,38,97,38,44,38,69,38,41,38,63,38,61,38,39,38,39,38,66,38,3374,38,1283,38,790,42,38,42,56,38,37,38,37,38,38,38,37,44,41,38,154,38,62,38,134,38,55,38,93,38,70,38,50,38,62,38,74,38,54,38,110,38,50,38,37,38,63,38,142,38,50,38,54,38,74,38,103,38,45,38,48,38,44,38,42,38,74,38,42,38,79,38,41,38,54,38,40,38,60,38,66,38,78,38,46,38,80,38,64,38,50,38,46,38,87,38,77,38,37,1340,132,40,44,40,60,38,44,38,986,38,6343,38,45,38,44,40,37,38,40,38,37,38,40,315,48,38,88,38,68,38,129,38,106,38,39,38,74,38,40,38,46,38,66,38,51,38,90,38,82,38,104,38,51,38,69,38,69,38,60,198,45,864,7923,38,37,56,63,38,64,38,44,38,90,38,64,38,48,38,74,38,44,38,94,38,120,38,95,38,54,38,67,38,54,38,67,1836,10789,38,102,38,45,38,45,38,45,38,45,38,44,38,74,38,50,38,56,38,122,38,56,38,67,38,89,38,56,38,45,38,100,38,7800,204,45,38,55,38,49,38,70,38,55,38,116,38,87,38,55,38,73,38,46,38,46,38,94,38,61,3996,6611,38,56,40,62,38,47,38,47,38,1915,39,41,39,4197,39,41,39,37,64,47,38,48,38,37,1086,2496,42,38,42,64,38,67,1341,1492,628,1515,52,3543,1818,1233,54,3460,38,47,376,771,90,38,42,37,582,1023,38,308,38,49,168,1204,372]
 
-unpackDictionaryData data0 data1 skipFlip =
+unpackDictionaryData data0 data1 =
     let
         dict =
             toUsAsciiBytes (data0 ++ data1)
 
         n =
-            String.length skipFlip
+            -- String.length skipFlip
+            Array.length skipFlipAlt
+
 
         go i offset accum =
             if i < n then
                 let
                     skip =
-                        (charCodeAt i skipFlip |> Maybe.withDefault 0) - 36
+                        (Array.get i skipFlipAlt |> Maybe.withDefault 0) - 36
 
                     flip =
-                        Maybe.withDefault 0 (charCodeAt (i + 1) skipFlip) - 36
+                        Maybe.withDefault 0 (Array.get (i + 1) skipFlipAlt) - 36
 
                     ( newOffset, newAccum ) =
                         innerLoop 0 flip (offset + skip) accum
@@ -2241,20 +2247,6 @@ decodeHuffmanTreeGroup alphabetSizeMax alphabetSizeLimit n =
 
 
 
-{-
-
-   function decodeHuffmanTreeGroup(alphabetSizeMax, alphabetSizeLimit, n, s) {
-     var /** number */ maxTableSize = MAX_HUFFMAN_TABLE_SIZE[(alphabetSizeLimit + 31) >> 5];
-     var /** !Int32Array */ group = new Int32Array(n + n * maxTableSize);
-     var /** number */ next = n;
-     for (var /** number */ i = 0; i < n; ++i) {
-       group[i] = next;
-       next += readHuffmanCode(alphabetSizeMax, alphabetSizeLimit, group, i, s);
-     }
-     return group;
-   }
-
--}
 
 
 type alias LutState a =
@@ -2306,20 +2298,6 @@ calculateDistanceLut alphabetSizeLimit state =
         |> go2 1 0
 
 
-
-{-
-     while (i < alphabetSizeLimit) {
-       var /** number */ base = ndirect + ((((2 + half) << bits) - 4) << npostfix) + 1;
-       for (var /** number */ j = 0; j < postfix; ++j) {
-         distExtraBits[i] = bits;
-         distOffset[i] = base + j;
-         ++i;
-       }
-       bits = bits + half;
-       half = half ^ 1;
-     }
-   }
--}
 
 
 decompress : State -> Result Error ( Bytes, State )
@@ -2394,8 +2372,13 @@ type alias Context =
 decompressHelp : Context -> Decoder Context
 decompressHelp context s =
     let
-        _ =
-            log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+        _ = log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+        
+        _ = 
+            if False then 
+                Debug.todo "crash" 
+            else 
+                ()
     in
     case s.runningState of
         10 ->
@@ -2551,21 +2534,24 @@ decompressHelp context s =
 
             else
                 let
-                    _ =
-                        log "in the else" ( s.j, s.insertLength )
 
                     init_prevByte1 =
                         unsafeGet (Bitwise.and (s.pos - 1) context.ringBufferMask) s.ringBuffer
                             |> Bitwise.and 0xFF
+                            |> log "prevbyte 1"
 
                     init_prevByte2 =
                         unsafeGet (Bitwise.and (s.pos - 2) context.ringBufferMask) s.ringBuffer
                             |> Bitwise.and 0xFF
+                            |> log "prevbyte 2"
+
+                    _ = log "index" (Bitwise.and (s.pos - 1) context.ringBufferMask, Array.slice 160 170 s.ringBuffer)
 
                     go currentContext prevByte1 prevByte2 s0 =
                         let
                             _ =
                                 -- log "decodeLiteralBlockSwitch bef" ( s0.runningState, ( s0.pos, s0.bitOffset, s0.accumulator32 ) )
+                                -- Debug.log "||| ----> s0 " ( ( s0.pos, s0.bitOffset, s0.accumulator32 ) )
                                 ()
                         in
                         if s0.j < s0.insertLength then
@@ -2575,6 +2561,7 @@ decompressHelp context s =
 
                                 Ok s1 ->
                                     let
+                                        -- _ = Debug.log "----> s1 " ( ( s1.pos, s1.bitOffset, s1.accumulator32 ), (prevByte1, prevByte2), (v1,v2) )
                                         i1 =
                                             s1.contextLookupOffset1 + prevByte1
 
@@ -2603,6 +2590,8 @@ decompressHelp context s =
                                     case readSymbol s2.literalTreeGroup literalTreeIdx s2 of
                                         ( s3, byte1 ) ->
                                             let
+
+                                                -- _ = Debug.log "--> " ( ( s3.pos, s3.bitOffset, s3.accumulator32 ), byte1 )
                                                 newRingBuffer =
                                                     Array.set s3.pos byte1 s3.ringBuffer
 
@@ -2729,6 +2718,9 @@ decompressHelp context s =
                     let
                         ( newRingBuffer, len ) =
                             Transforms.transformDictionaryWord s.ringBuffer s.pos dictionary_data offset s.copyLength Transforms.rfc_transforms transformIdx
+
+                        
+                        _ = log "new ring buffer" (Array.slice 180 200 dictionary_data)
 
                         newMetaBlockLength =
                             s.metaBlockLength - len
@@ -3059,6 +3051,7 @@ remainder7 context s =
 
                 Ok ( s5, distanceCode ) ->
                     let
+                        -- _ = Debug.log "distance" (s6.distance, s6.maxDistance ) 
                         s6 =
                             { s5
                                 | maxDistance =

@@ -103,7 +103,7 @@ wholePipeline =
                     |> Expect.equal { pos = 10864, bitOffset = 2, accumulator32 = -1174980111, shortBuffer = shortBuffer, halfOffset = 18 }
 
         -- , pipeline "generated" Generated.text Generated.bytes
-        , only <| 
+        , 
             test "lookup table is correctly decoded" <| 
                 \_ -> 
                 Internal.lookup
