@@ -753,10 +753,7 @@ decodeMetaBlockBytes s_ =
                 case topUpAccumulator state_ of
                     state ->
                         case readFewBits 8 state of
-                            Err e ->
-                                Err e
-
-                            Ok ( s2, bits ) ->
+                            ( s2, bits ) ->
                                 if bits == 0 && i + 1 == sizeBytes && sizeBytes > 1 then
                                     Err "Exuberant byte"
 
@@ -770,19 +767,13 @@ decodeMetaBlockBytes s_ =
             { s_ | isMetadata = True }
     in
     case readFewBits 1 s of
-        Err e ->
-            Err e
-
-        Ok ( s1, reserved ) ->
+        ( s1, reserved ) ->
             if reserved /= 0 then
                 Err "Corrupted reserved bit"
 
             else
                 case readFewBits 2 s1 of
-                    Err e ->
-                        Err e
-
-                    Ok ( s2, sizeBytes ) ->
+                    ( s2, sizeBytes ) ->
                         if sizeBytes == 0 then
                             Ok ( s2, () )
 
@@ -798,10 +789,7 @@ decodeMetaBlockNibbles numberOfNibbles s =
                 case topUpAccumulator state_ of
                     state ->
                         case readFewBits 4 state of
-                            Err e ->
-                                Err e
-
-                            Ok ( s2, bits ) ->
+                            ( s2, bits ) ->
                                 if bits == 0 && i + 1 == sizeNibbles && sizeNibbles > 4 then
                                     Err (log "error" "Exuberant nibble")
 
@@ -821,10 +809,7 @@ decodeMetaBlockLength s_ =
             topUpAccumulator s_
     in
     case readFewBits 1 s__ of
-        Err e ->
-            Err e
-
-        Ok ( s3, inputEnd ) ->
+        ( s3, inputEnd ) ->
             let
                 s =
                     { s3
@@ -841,10 +826,7 @@ decodeMetaBlockLength s_ =
 
                 continue s0 =
                     case readFewBits 2 s0 of
-                        Err e ->
-                            Err e
-
-                        Ok ( s5, sizeNibbles_ ) ->
+                        ( s5, sizeNibbles_ ) ->
                             let
                                 sizeNibbles =
                                     sizeNibbles_ + 4
@@ -867,10 +849,7 @@ decodeMetaBlockLength s_ =
                                     in
                                     if s7.inputEnd == False then
                                         case readFewBits 1 s7 of
-                                            Err e ->
-                                                Err e
-
-                                            Ok ( s8, uncompressed ) ->
+                                            ( s8, uncompressed ) ->
                                                 Ok ( { s8 | isUncompressed = uncompressed == 1 }, () )
 
                                     else
@@ -878,10 +857,7 @@ decodeMetaBlockLength s_ =
             in
             if s.inputEnd then
                 case readFewBits 1 s of
-                    Err e ->
-                        Err e
-
-                    Ok ( s1, bit ) ->
+                    ( s1, bit ) ->
                         if bit /= 0 then
                             Ok ( s1, () )
 
@@ -892,7 +868,7 @@ decodeMetaBlockLength s_ =
                 continue s
 
 
-decodeWindowBits : State -> Result Error ( State, Int )
+decodeWindowBits : State -> ( State, Int )
 decodeWindowBits initial =
     let
         largeWindowEnabled =
@@ -904,26 +880,23 @@ decodeWindowBits initial =
 
         newState =
             readFewBits 1 s
-                |> Result.andThen
-                    (\( s2, v ) ->
+                |> (\( s2, v ) ->
                         if v == 0 then
-                            Ok ( s2, 16 )
+                            ( s2, 16 )
 
                         else
                             readFewBits 3 s2
-                                |> Result.andThen
-                                    (\( s3_, firstN ) ->
+                                |> (\( s3_, firstN ) ->
                                         if firstN /= 0 then
-                                            Ok ( s3_, 17 + firstN )
+                                            ( s3_, 17 + firstN )
 
                                         else
                                             readFewBits 3 s3_
-                                                |> Result.andThen
-                                                    (\( s3, n ) ->
+                                                |> (\( s3, n ) ->
                                                         if n /= 0 then
                                                             if n == 1 then
                                                                 if largeWindowEnabled == False then
-                                                                    Ok ( s3, -1 )
+                                                                    ( s3, -1 )
 
                                                                 else
                                                                     let
@@ -931,60 +904,49 @@ decodeWindowBits initial =
                                                                             { s3 | isLargeWindow = True }
                                                                     in
                                                                     readFewBits 1 s4
-                                                                        |> Result.andThen
-                                                                            (\( s5, w ) ->
+                                                                        |> (\( s5, w ) ->
                                                                                 if w == 1 then
-                                                                                    Ok ( s5, -1 )
+                                                                                    ( s5, -1 )
 
                                                                                 else
                                                                                     readFewBits 6 s5
-                                                                                        |> Result.map
-                                                                                            (\( s6, m ) ->
+                                                                                        |> (\( s6, m ) ->
                                                                                                 if m < 10 || m > 30 then
                                                                                                     ( s6, -1 )
 
                                                                                                 else
                                                                                                     ( s6, m )
-                                                                                            )
-                                                                            )
+                                                                                           )
+                                                                           )
 
                                                             else
-                                                                Ok ( s3, 8 + n )
+                                                                ( s3, 8 + n )
 
                                                         else
-                                                            Ok ( s3, 17 )
-                                                    )
-                                    )
-                    )
+                                                            ( s3, 17 )
+                                                   )
+                                   )
+                   )
     in
     newState
 
 
-decodeVarLenUnsignedByte : Decoder Int
+decodeVarLenUnsignedByte : State -> ( State, Int )
 decodeVarLenUnsignedByte s_ =
     case topUpAccumulator s_ |> readFewBits 1 of
-        Err e ->
-            Err e
+        ( s, 0 ) ->
+            ( s, 0 )
 
-        Ok ( s, 0 ) ->
-            Ok ( s, 0 )
-
-        Ok ( s, _ ) ->
+        ( s, _ ) ->
             case readFewBits 3 s of
-                Err e ->
-                    Err e
-
-                Ok ( s2, n ) ->
+                ( s2, n ) ->
                     if n == 0 then
-                        Ok ( s2, 1 )
+                        ( s2, 1 )
 
                     else
                         case readFewBits n s2 of
-                            Err e ->
-                                Err e
-
-                            Ok ( s3, v ) ->
-                                Ok ( s3, v + Bitwise.shiftLeftBy n 1 )
+                            ( s3, v ) ->
+                                ( s3, v + Bitwise.shiftLeftBy n 1 )
 
 
 readMetablockPartition : Int -> Int -> Decoder Int
@@ -1032,6 +994,7 @@ readMetablockPartition treeType numBlockTypes s =
                                 { s4 | blockTrees = Array.set (2 * treeType + 2) offset3 r2.tableGroup }
                         in
                         readBlockLength s5.blockTrees (2 * treeType + 1) s5
+                            |> Ok
 
 
 readSymbol : Array Int -> Int -> State -> ( State, Int )
@@ -1088,13 +1051,10 @@ readHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s_ =
 
         Ok s ->
             case readFewBits 2 s of
-                Err e ->
-                    Err e
-
-                Ok ( s2, 1 ) ->
+                ( s2, 1 ) ->
                     readSimpleHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s2
 
-                Ok ( s2, skip ) ->
+                ( s2, skip ) ->
                     readComplexHuffmanCode alphabetSizeLimit skip tableGroup tableIdx s2
 
 
@@ -1248,10 +1208,7 @@ readHuffmanCodeLengths codeLengthCodeLengths numSymbols initialCodeLengths state
                                     topUpAccumulator s2
                             in
                             case readFewBits extraBits s3 of
-                                Err e ->
-                                    Err e
-
-                                Ok ( s4, v ) ->
+                                ( s4, v ) ->
                                     let
                                         repeat3 =
                                             repeat2 + v + 3
@@ -1334,10 +1291,7 @@ readSimpleHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s0 =
                         topUpAccumulator s_
                 in
                 case readFewBits maxBits s of
-                    Err e ->
-                        Err e
-
-                    Ok ( newS, symbol ) ->
+                    ( newS, symbol ) ->
                         if symbol >= alphabetSizeLimit then
                             Err "can't readHuffmanCode"
 
@@ -1350,20 +1304,14 @@ readSimpleHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s0 =
         readHistogramId numSymbols s =
             if numSymbols == 4 then
                 case readFewBits 1 s of
-                    Err e ->
-                        Err e
-
-                    Ok ( newS, extra ) ->
-                        Ok ( newS, extra + numSymbols )
+                    ( newS, extra ) ->
+                        ( newS, extra + numSymbols )
 
             else
-                Ok ( s, numSymbols )
+                ( s, numSymbols )
     in
     case readFewBits 2 s0 of
-        Err e ->
-            Err e
-
-        Ok ( s1, n ) ->
+        ( s1, n ) ->
             let
                 numSymbols =
                     n + 1
@@ -1379,10 +1327,7 @@ readSimpleHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s0 =
 
                         Ok symbols ->
                             case readHistogramId numSymbols s2 of
-                                Err e ->
-                                    Err e
-
-                                Ok ( s3, histogramId ) ->
+                                ( s3, histogramId ) ->
                                     let
                                         readSymbols index =
                                             Array.get index symbols |> Maybe.withDefault 0
@@ -1751,7 +1696,7 @@ checkDupes symbols =
     go (Array.toList symbols)
 
 
-readBlockLength : Array Int -> Int -> Decoder Int
+readBlockLength : Array Int -> Int -> State -> ( State, Int )
 readBlockLength tableGroup tableIdx s0 =
     let
         s1 =
@@ -1773,11 +1718,8 @@ readBlockLength tableGroup tableIdx s0 =
                 else
                     readManyBits n s3
             of
-                Err e ->
-                    Err e
-
-                Ok ( s4, result ) ->
-                    Ok ( s4, unsafeGet code block_length_offset + result )
+                ( s4, result ) ->
+                    ( s4, unsafeGet code block_length_offset + result )
 
 
 map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
@@ -1814,10 +1756,7 @@ readBlocks s0 =
     let
         readLiteralBlock initial =
             case decodeVarLenUnsignedByte initial of
-                Err e ->
-                    Err e
-
-                Ok ( s1, numLiteralBlockTypes ) ->
+                ( s1, numLiteralBlockTypes ) ->
                     case readMetablockPartition 0 (numLiteralBlockTypes + 1) { s1 | numLiteralBlockTypes = numLiteralBlockTypes + 1 } of
                         Err e ->
                             Err e
@@ -1827,10 +1766,7 @@ readBlocks s0 =
 
         readCommandBlock initial =
             case decodeVarLenUnsignedByte initial of
-                Err e ->
-                    Err e
-
-                Ok ( s1, numCommandBlockTypes ) ->
+                ( s1, numCommandBlockTypes ) ->
                     case readMetablockPartition 1 (numCommandBlockTypes + 1) { s1 | numCommandBlockTypes = numCommandBlockTypes + 1 } of
                         Err e ->
                             Err e
@@ -1840,10 +1776,7 @@ readBlocks s0 =
 
         readDistanceBlock initial =
             case decodeVarLenUnsignedByte initial of
-                Err e ->
-                    Err e
-
-                Ok ( s1, numDistanceBlockTypes ) ->
+                ( s1, numDistanceBlockTypes ) ->
                     case readMetablockPartition 2 (numDistanceBlockTypes + 1) { s1 | numDistanceBlockTypes = numDistanceBlockTypes + 1 } of
                         Err e ->
                             Err e
@@ -1894,20 +1827,24 @@ readMetablockHuffmanCodesAndContextMaps =
                                 topUpAccumulator s0
                         in
                         case readFewBits 2 s1 of
-                            Err e ->
-                                Err e
-
-                            Ok ( s2, cm ) ->
+                            ( s2, cm ) ->
                                 go2 limit (i + 1) s2 (Array.push cm acc)
 
                     else
                         Ok ( i, s0, acc )
-            in
-            case map2 Tuple.pair (readFewBits 2) (readFewBits 4) state of
-                Err e ->
-                    Err e
 
-                Ok ( newState, ( a, b ) ) ->
+                readFewBits2 n m w0 =
+                    let
+                        ( w1, v1 ) =
+                            readFewBits n w0
+
+                        ( w2, v2 ) =
+                            readFewBits m w1
+                    in
+                    ( w2, ( v1, v2 ) )
+            in
+            case readFewBits2 2 4 state of
+                ( newState, ( a, b ) ) ->
                     let
                         newerState =
                             { newState
@@ -2043,19 +1980,15 @@ decodeContextMap contextMapSize contextMap s0 =
     let
         readMaxRunLengthPrefix =
             readFewBits 1
-                >> Result.andThen
-                    (\( s, useRleForZeros ) ->
+                >> (\( s, useRleForZeros ) ->
                         if useRleForZeros /= 0 then
                             case readFewBits 4 s of
-                                Err e ->
-                                    Err e
-
-                                Ok ( newS, v ) ->
-                                    Ok ( newS, v + 1 )
+                                ( newS, v ) ->
+                                    ( newS, v + 1 )
 
                         else
-                            Ok ( s, 0 )
-                    )
+                            ( s, 0 )
+                   )
     in
     case maybeReadMoreInput 2030 s0 of
         Err e ->
@@ -2063,10 +1996,7 @@ decodeContextMap contextMapSize contextMap s0 =
 
         Ok ( s1, _ ) ->
             case decodeVarLenUnsignedByte s1 of
-                Err e ->
-                    Err e
-
-                Ok ( s2, v ) ->
+                ( s2, v ) ->
                     let
                         numTrees =
                             v + 1
@@ -2076,10 +2006,7 @@ decodeContextMap contextMapSize contextMap s0 =
 
                     else
                         case readMaxRunLengthPrefix (topUpAccumulator s2) of
-                            Err e ->
-                                Err e
-
-                            Ok ( s3, maxRunLengthPrefix ) ->
+                            ( s3, maxRunLengthPrefix ) ->
                                 let
                                     alphabetSize =
                                         numTrees + maxRunLengthPrefix
@@ -2120,10 +2047,7 @@ decodeContextMap contextMapSize contextMap s0 =
 
                                                             else if code <= maxRunLengthPrefix then
                                                                 case s5 |> topUpAccumulator |> readFewBits code of
-                                                                    Err e ->
-                                                                        Err e
-
-                                                                    Ok ( s6, reps_ ) ->
+                                                                    ( s6, reps_ ) ->
                                                                         let
                                                                             reps =
                                                                                 Bitwise.shiftLeftBy code 1 + reps_
@@ -2143,17 +2067,14 @@ decodeContextMap contextMapSize contextMap s0 =
                                         in
                                         go 0 contextMap s4
                                             |> Result.map (Tuple.mapFirst topUpAccumulator)
-                                            |> Result.andThen
+                                            |> Result.map
                                                 (\( s, ( currentContextMap, currentNumTrees ) ) ->
                                                     case readFewBits 1 s of
-                                                        Err e ->
-                                                            Err e
+                                                        ( newState, 1 ) ->
+                                                            ( newState, ( inverseMoveToFrontTransform currentContextMap contextMapSize, currentNumTrees ) )
 
-                                                        Ok ( newState, 1 ) ->
-                                                            Ok ( newState, ( inverseMoveToFrontTransform currentContextMap contextMapSize, currentNumTrees ) )
-
-                                                        Ok ( newState, _ ) ->
-                                                            Ok ( newState, ( currentContextMap, currentNumTrees ) )
+                                                        ( newState, _ ) ->
+                                                            ( newState, ( currentContextMap, currentNumTrees ) )
                                                 )
 
 
@@ -2299,10 +2220,7 @@ decompress unvalidated =
             s =
                 if unvalidated.runningState == 1 then
                     case decodeWindowBits unvalidated of
-                        Err e ->
-                            Err e
-
-                        Ok ( newS, windowBits ) ->
+                        ( newS, windowBits ) ->
                             if windowBits == -1 then
                                 Err "Invalid 'windowBits' code"
 
@@ -2610,13 +2528,10 @@ evaluateState4 context s =
                                                 Bitwise.shiftRightBy 8 insertAndCopyExtraBits
                                         in
                                         readBits extraBits state
-                                            |> Result.map (\( s_, w ) -> ( s_, ( insertLengthBits, w ) ))
+                                            |> (\( s_, w ) -> ( s_, ( insertLengthBits, w ) ))
                                 in
-                                case s3 |> topUpAccumulator |> readInsertLength |> Result.andThen readCopyLength of
-                                    Err e ->
-                                        Err e
-
-                                    Ok ( s5, ( insertLengthBits, copyLengthBits ) ) ->
+                                case s3 |> topUpAccumulator |> readInsertLength |> readCopyLength of
+                                    ( s5, ( insertLengthBits, copyLengthBits ) ) ->
                                         Ok (updateEvaluateState4 0 7 (copyLengthBits + copyLengthOffset) (insertLengthBits + insertLengthOffset) (unsafeGet (cmdCode + 3) cmd_lookup) (s3.commandBlockLength - 1) s5)
 
 
@@ -3048,10 +2963,7 @@ remainder7 context s =
                                                         readBits extraBits (topUpAccumulator s3)
                                             in
                                             case readSomeBits of
-                                                Err e ->
-                                                    Err e
-
-                                                Ok ( s4, bits ) ->
+                                                ( s4, bits ) ->
                                                     let
                                                         newDistance =
                                                             unsafeGet distanceCode s4.distOffset
@@ -3204,10 +3116,7 @@ decodeBlockTypeAndLength treeType numBlockTypes s0 =
     case readSymbol s1.blockTrees (2 * treeType) s1 of
         ( s2, initialBlockType ) ->
             case readBlockLength s2.blockTrees (2 * treeType + 1) s2 of
-                Err e ->
-                    Err e
-
-                Ok ( s3, result ) ->
+                ( s3, result ) ->
                     let
                         blockType =
                             (case initialBlockType of
@@ -3277,10 +3186,7 @@ jumpToByteBoundary s =
     in
     if padding /= 0 then
         case readFewBits padding s of
-            Err e ->
-                Err e
-
-            Ok ( s2, paddingBits ) ->
+            ( s2, paddingBits ) ->
                 if paddingBits /= 0 then
                     Err "Corrupted padding bits"
 
@@ -3325,6 +3231,7 @@ unsafeGet16 i arr =
 -}
 
 
+readBits : Int -> State -> ( State, Int )
 readBits nbits state =
     if nbits <= 16 then
         let
@@ -3343,7 +3250,7 @@ readBits nbits state =
             ( newerBitOffset, val ) =
                 pureReadFewBits nbits newBitOffset newAccumulator32
         in
-        Ok ( updateAccumulator newerBitOffset newHalfOffset newAccumulator32 state, val )
+        ( updateAccumulator newerBitOffset newHalfOffset newAccumulator32 state, val )
 
     else
         readManyBits nbits
@@ -3364,22 +3271,19 @@ pureReadFewBits n bitOffset accumulator32 =
     ( bitOffset + n, val )
 
 
-readFewBits : Int -> State -> Result Error ( State, Int )
+readFewBits : Int -> State -> ( State, Int )
 readFewBits n s =
     let
         ( newBitOffset, val ) =
             pureReadFewBits n s.bitOffset s.accumulator32
     in
-    Ok ( updateBitOffset newBitOffset s, val )
+    ( updateBitOffset newBitOffset s, val )
 
 
-readManyBits : Int -> Decoder Int
+readManyBits : Int -> State -> ( State, Int )
 readManyBits n inputS =
     case readFewBits 16 inputS of
-        Err e ->
-            Err e
-
-        Ok ( s, low ) ->
+        ( s, low ) ->
             let
                 s2 =
                     { s
@@ -3392,7 +3296,7 @@ readManyBits n inputS =
                     }
             in
             readFewBits (n - 16) s2
-                |> Result.map (Tuple.mapSecond (\high -> Bitwise.or low (Bitwise.shiftLeftBy 16 high)))
+                |> Tuple.mapSecond (\high -> Bitwise.or low (Bitwise.shiftLeftBy 16 high))
 
 
 type alias ReadInputState s =
