@@ -3006,7 +3006,7 @@ remainder7 context s =
                                 unsafeGet s1.distRbIdx s1.rings
                         in
                         Ok
-                            ( { s1 | distance = newDistance }
+                            ( s1
                             , newDistance
                             , oldDistanceCode
                             )
@@ -3029,14 +3029,14 @@ remainder7 context s =
                                                 index =
                                                     Bitwise.and (s3.distRbIdx + unsafeGet distanceCode distance_short_code_index_offset) 0x03
 
-                                                s4 =
-                                                    { s3 | distance = unsafeGet index s3.rings + unsafeGet distanceCode distance_short_code_value_offset }
+                                                newDistance =
+                                                    unsafeGet index s3.rings + unsafeGet distanceCode distance_short_code_value_offset
                                             in
-                                            if s4.distance < 0 then
+                                            if newDistance < 0 then
                                                 Err "negative distance"
 
                                             else
-                                                Ok ( s4, s4.distance, distanceCode )
+                                                Ok ( s3, newDistance, distanceCode )
 
                                         else
                                             let
@@ -3061,7 +3061,7 @@ remainder7 context s =
                                                                 + Bitwise.shiftLeftBy s4.distancePostfixBits bits
                                                     in
                                                     Ok
-                                                        ( { s4 | distance = newDistance }
+                                                        ( s4
                                                         , newDistance
                                                         , distanceCode
                                                         )
@@ -3073,14 +3073,14 @@ remainder7 context s =
                 Ok ( s5, newDistance, distanceCode ) ->
                     let
                         newMaxDistance =
-                            if s5.maxDistance /= s5.maxBackwardDistance && s5.pos < s5.maxBackwardDistance then
+                            if newDistance /= s5.maxBackwardDistance && s5.pos < s5.maxBackwardDistance then
                                 s5.pos
 
                             else
                                 s5.maxBackwardDistance
                     in
-                    if s5.distance > newMaxDistance then
-                        Ok { s5 | runningState = 9, maxDistance = newMaxDistance }
+                    if newDistance > newMaxDistance then
+                        Ok { s5 | runningState = 9, maxDistance = newMaxDistance, distance = newDistance }
 
                     else if s5.copyLength > s.metaBlockLength then
                         Err ("Invalid backward reference in remainder7 at position " ++ String.fromInt s5.pos)
@@ -3091,21 +3091,27 @@ remainder7 context s =
                                 (s5.distRbIdx + 1) |> Bitwise.and 0x03
                         in
                         Ok
-                            { s5
-                                | distRbIdx = distRbIdx
-                                , rings = Array.set distRbIdx s5.distance s5.rings
-                                , maxDistance = newMaxDistance
-                                , j = 0
-                                , runningState = 8
-                            }
+                            (updateRemainder7
+                                newDistance
+                                newMaxDistance
+                                0
+                                8
+                                distRbIdx
+                                (Array.set distRbIdx newDistance s5.rings)
+                                s5
+                            )
 
                     else
                         Ok
-                            { s5
-                                | maxDistance = newMaxDistance
-                                , j = 0
-                                , runningState = 8
-                            }
+                            (updateRemainder7
+                                newDistance
+                                newMaxDistance
+                                0
+                                8
+                                s5.distRbIdx
+                                s5.rings
+                                s5
+                            )
 
 
 readBits nbits state =
@@ -3759,6 +3765,73 @@ copyState7 newPos newJ newRingBuffer orig =
     , distancePostfixMask = orig.distancePostfixMask
     , distancePostfixBits = orig.distancePostfixBits
     , distance = orig.distance
+    , copyLength = orig.copyLength
+    , maxBackwardDistance = orig.maxBackwardDistance
+    , maxRingBufferSize = orig.maxRingBufferSize
+    , ringBufferSize = orig.ringBufferSize
+    , expectedTotalSize = orig.expectedTotalSize
+    , outputOffset = orig.outputOffset
+    , outputLength = orig.outputLength
+    , outputUsed = orig.outputUsed
+    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , ringBufferBytesReady = orig.ringBufferBytesReady
+    , isEager = orig.isEager
+    , isLargeWindow = orig.isLargeWindow
+    , input = orig.input
+    }
+
+
+updateRemainder7 : Int -> Int -> Int -> Int -> Int -> Array Int -> State -> State
+updateRemainder7 distance maxDistance j runningState distRbIdx rings orig =
+    { ringBuffer = orig.ringBuffer
+    , contextModes = orig.contextModes
+    , contextMap = orig.contextMap
+    , distContextMap = orig.distContextMap
+    , distExtraBits = orig.distExtraBits
+    , output = orig.output
+    , byteBuffer = orig.byteBuffer
+    , shortBuffer = orig.shortBuffer
+    , intBuffer = orig.intBuffer
+    , rings = rings
+    , blockTrees = orig.blockTrees
+    , literalTreeGroup = orig.literalTreeGroup
+    , commandTreeGroup = orig.commandTreeGroup
+    , distanceTreeGroup = orig.distanceTreeGroup
+    , distOffset = orig.distOffset
+    , runningState = runningState
+    , nextRunningState = orig.nextRunningState
+    , accumulator32 = orig.accumulator32
+    , bitOffset = orig.bitOffset
+    , halfOffset = orig.halfOffset
+    , tailBytes = orig.tailBytes
+    , endOfStreamReached = orig.endOfStreamReached
+    , metaBlockLength = orig.metaBlockLength
+    , inputEnd = orig.inputEnd
+    , isUncompressed = orig.isUncompressed
+    , isMetadata = orig.isMetadata
+    , literalBlockLength = orig.literalBlockLength
+    , numLiteralBlockTypes = orig.numLiteralBlockTypes
+    , commandBlockLength = orig.commandBlockLength
+    , numCommandBlockTypes = orig.numCommandBlockTypes
+    , distanceBlockLength = orig.distanceBlockLength
+    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , pos = orig.pos
+    , maxDistance = maxDistance
+    , distRbIdx = distRbIdx
+    , trivialLiteralContext = orig.trivialLiteralContext
+    , literalTreeIdx = orig.literalTreeIdx
+    , commandTreeIdx = orig.commandTreeIdx
+    , j = j
+    , insertLength = orig.insertLength
+    , contextMapSlice = orig.contextMapSlice
+    , distContextMapSlice = orig.distContextMapSlice
+    , contextLookupOffset1 = orig.contextLookupOffset1
+    , contextLookupOffset2 = orig.contextLookupOffset2
+    , distanceCode = orig.distanceCode
+    , numDirectDistanceCodes = orig.numDirectDistanceCodes
+    , distancePostfixMask = orig.distancePostfixMask
+    , distancePostfixBits = orig.distancePostfixBits
+    , distance = distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
     , maxRingBufferSize = orig.maxRingBufferSize
