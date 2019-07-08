@@ -3130,14 +3130,6 @@ remainder7 context s =
                             )
 
 
-readBits nbits state =
-    if nbits <= 16 then
-        readFewBits nbits (topUpAccumulator state)
-
-    else
-        readManyBits nbits (topUpAccumulator state)
-
-
 decodeLiteralBlockSwitch s0 =
     case decodeBlockTypeAndLength 0 s0.numLiteralBlockTypes s0 of
         Err e ->
@@ -3312,13 +3304,72 @@ unsafeGet16 i arr =
                 v
 
 
+
+{-
+      topUpAccumulator : State -> State
+      topUpAccumulator s =
+
+
+      putOnAccumulator : State -> State
+      putOnAccumulator s =
+          let
+              next =
+                  Array.get s.halfOffset s.shortBuffer
+                      |> Maybe.withDefault 0
+                      |> Bitwise.shiftLeftBy 16
+          in
+          updateAccumulator (s.bitOffset - 16) (s.halfOffset + 1) (Bitwise.or next (Bitwise.shiftRightZfBy 16 s.accumulator32)) s
+
+   -- updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
+-}
+
+
+readBits nbits state =
+    if nbits <= 16 then
+        let
+            ( newBitOffset, newHalfOffset, newAccumulator32 ) =
+                if state.bitOffset >= 16 then
+                    let
+                        next =
+                            unsafeGet state.halfOffset state.shortBuffer
+                                |> Bitwise.shiftLeftBy 16
+                    in
+                    ( state.bitOffset - 16, state.halfOffset + 1, Bitwise.or next (Bitwise.shiftRightZfBy 16 state.accumulator32) )
+
+                else
+                    ( state.bitOffset, state.halfOffset, state.accumulator32 )
+
+            ( newerBitOffset, val ) =
+                pureReadFewBits nbits newBitOffset newAccumulator32
+        in
+        Ok ( updateAccumulator newerBitOffset newHalfOffset newAccumulator32 state, val )
+
+    else
+        readManyBits nbits
+            (if state.bitOffset >= 16 then
+                putOnAccumulator state
+
+             else
+                state
+            )
+
+
+pureReadFewBits : Int -> Int -> Int -> ( Int, Int )
+pureReadFewBits n bitOffset accumulator32 =
+    let
+        val =
+            Bitwise.and (Bitwise.shiftRightZfBy bitOffset accumulator32) (Bitwise.shiftLeftBy n 1 - 1)
+    in
+    ( bitOffset + n, val )
+
+
 readFewBits : Int -> State -> Result Error ( State, Int )
 readFewBits n s =
     let
-        val =
-            Bitwise.and (Bitwise.shiftRightZfBy s.bitOffset s.accumulator32) (Bitwise.shiftLeftBy n 1 - 1)
+        ( newBitOffset, val ) =
+            pureReadFewBits n s.bitOffset s.accumulator32
     in
-    Ok ( updateBitOffset (s.bitOffset + n) s, val )
+    Ok ( updateBitOffset newBitOffset s, val )
 
 
 readManyBits : Int -> Decoder Int
