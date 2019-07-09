@@ -2864,8 +2864,12 @@ writeRingBuffer ringBufferBytesReady s =
         newState =
             if toWrite /= 0 then
                 let
+                    slice =
+                        Array.slice s.ringBufferBytesWritten (s.ringBufferBytesWritten + toWrite) s.ringBuffer
+
                     newOutput =
-                        setArraySlice (Array.slice s.ringBufferBytesWritten (s.ringBufferBytesWritten + toWrite) s.ringBuffer) (s.outputOffset + s.outputUsed) s.output
+                        -- setArraySlice (Array.slice s.ringBufferBytesWritten (s.ringBufferBytesWritten + toWrite) s.ringBuffer) (s.outputOffset + s.outputUsed) s.output
+                        Array.append s.output slice
 
                     s2 =
                         { s | output = newOutput, outputUsed = s.outputUsed + toWrite, ringBufferBytesWritten = s.ringBufferBytesWritten + toWrite }
@@ -3513,8 +3517,11 @@ decode input =
 
         Ok s ->
             let
+                initialOutput =
+                    Array.repeat 16384 0
+
                 decodeLoop state chunks =
-                    case decompress { state | outputLength = 16384, outputOffset = 0, outputUsed = 0, output = Array.repeat 16384 0 } of
+                    case decompress { state | outputLength = 16384, outputOffset = 0, outputUsed = 0, output = Array.empty } of
                         Err e ->
                             Err e
 
