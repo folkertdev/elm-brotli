@@ -31,7 +31,7 @@ wholePipeline =
                     in
                     case Internal.decode data of
                         Err e ->
-                            Expect.fail e
+                            Expect.fail (Debug.toString e)
 
                         Ok v ->
                             Decode.decode (Decode.string (Bytes.width v)) v
@@ -49,7 +49,7 @@ wholePipeline =
                     in
                     case Internal.decode data of
                         Err e ->
-                            Expect.fail e
+                            Expect.fail (Debug.toString e)
 
                         Ok v ->
                             Decode.decode (Decode.string (Bytes.width v)) v

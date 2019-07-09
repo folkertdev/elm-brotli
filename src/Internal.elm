@@ -51,11 +51,7 @@ type alias State =
     , bitOffset : Int
     , halfOffset : Int
     , tailBytes : Int
-    , endOfStreamReached : Bool
     , metaBlockLength : Int
-    , inputEnd : Bool
-    , isUncompressed : Bool
-    , isMetadata : Bool
     , literalBlockLength : Int
     , numLiteralBlockTypes : Int
     , commandBlockLength : Int
@@ -72,8 +68,7 @@ type alias State =
     , insertLength : Int
     , contextMapSlice : Int
     , distContextMapSlice : Int
-    , contextLookupOffset1 : Int
-    , contextLookupOffset2 : Int
+    , contextLookup : { offset1 : Int, offset2 : Int }
     , distanceCode : Int
     , numDirectDistanceCodes : Int
     , distancePostfixMask : Int
@@ -84,14 +79,31 @@ type alias State =
     , maxRingBufferSize : Int
     , ringBufferSize : Int
     , expectedTotalSize : Int
-    , isEager : Bool
-    , isLargeWindow : Bool
     , input : InputStream
+    , flags : Flags
+    }
+
+
+type alias Flags =
+    { endOfStreamReached : Bool
+    , isUncompressed : Bool
+    , isMetadata : Bool
+    , isLargeWindow : Bool
+    , inputEnd : Bool
     }
 
 
 defaultState : Bytes -> State
 defaultState buffer =
+    let
+        defaultFlags =
+            { endOfStreamReached = False
+            , inputEnd = False
+            , isUncompressed = False
+            , isMetadata = False
+            , isLargeWindow = False
+            }
+    in
     { ringBuffer = Array.empty
     , contextModes = Array.empty
     , contextMap = Array.empty
@@ -112,11 +124,7 @@ defaultState buffer =
     , bitOffset = 0
     , halfOffset = 0
     , tailBytes = 0
-    , endOfStreamReached = False
     , metaBlockLength = 0
-    , inputEnd = False
-    , isUncompressed = False
-    , isMetadata = False
     , literalBlockLength = 0
     , numLiteralBlockTypes = 0
     , commandBlockLength = 0
@@ -133,8 +141,7 @@ defaultState buffer =
     , insertLength = 0
     , contextMapSlice = 0
     , distContextMapSlice = 0
-    , contextLookupOffset1 = 0
-    , contextLookupOffset2 = 0
+    , contextLookup = { offset1 = 0, offset2 = 0 }
     , distanceCode = 0
     , numDirectDistanceCodes = 0
     , distancePostfixMask = 0
@@ -145,9 +152,8 @@ defaultState buffer =
     , maxRingBufferSize = 0
     , ringBufferSize = 0
     , expectedTotalSize = 0
-    , isEager = False
-    , isLargeWindow = False
     , input = { offset = 0, buffer = buffer }
+    , flags = defaultFlags
     }
 
 
@@ -214,13 +220,20 @@ log2floor v =
 
 initBitReader : State -> Result Error State
 initBitReader s =
+    let
+        oldFlags =
+            s.flags
+
+        newFlags =
+            { oldFlags | endOfStreamReached = False }
+    in
     { s
         | byteBuffer = Array.repeat 4160 0
         , accumulator32 = 0
         , shortBuffer = Array.repeat 2080 0
         , bitOffset = 32
         , halfOffset = 2048
-        , endOfStreamReached = False
+        , flags = newFlags
     }
         |> prepare
 
@@ -252,7 +265,7 @@ reload s =
 
 checkHealth : Bool -> State -> Result Error State
 checkHealth endOfStream s =
-    if not s.endOfStreamReached then
+    if not s.flags.endOfStreamReached then
         Ok s
 
     else
@@ -298,7 +311,7 @@ type alias InputStream =
 
 readNextMetablockHeader : State -> Result Error State
 readNextMetablockHeader s =
-    if s.inputEnd then
+    if s.flags.inputEnd then
         Ok
             { s
                 | nextRunningState = 10
@@ -318,11 +331,11 @@ readNextMetablockHeader s =
             |> Result.andThen decodeMetaBlockLength
             |> Result.andThen
                 (\s4 ->
-                    if s4.metaBlockLength == 0 && s4.isMetadata == False then
+                    if s4.metaBlockLength == 0 && s4.flags.isMetadata == False then
                         Ok s4
 
                     else
-                        (if s4.isUncompressed || s4.isMetadata then
+                        (if s4.flags.isUncompressed || s4.flags.isMetadata then
                             case jumpToByteBoundary s4 of
                                 Err e ->
                                     Err e
@@ -330,7 +343,7 @@ readNextMetablockHeader s =
                                 Ok s5 ->
                                     Ok
                                         (updateRunningState
-                                            (if s5.isMetadata then
+                                            (if s5.flags.isMetadata then
                                                 5
 
                                              else
@@ -344,7 +357,7 @@ readNextMetablockHeader s =
                         )
                             |> Result.andThen
                                 (\s6 ->
-                                    if s6.isMetadata then
+                                    if s6.flags.isMetadata then
                                         Ok s6
 
                                     else
@@ -392,7 +405,7 @@ maybeReallocateRingBuffer s =
                             size
 
                     calculate2 size =
-                        if s.inputEnd == False && size < 16384 && s.maxRingBufferSize >= 16384 then
+                        if s.flags.inputEnd == False && size < 16384 && s.maxRingBufferSize >= 16384 then
                             16384
 
                         else
@@ -438,8 +451,14 @@ decodeMetaBlockBytes s_ =
             else
                 Ok state_
 
+        oldFlags =
+            s_.flags
+
+        newFlags =
+            { oldFlags | isMetadata = True }
+
         s =
-            { s_ | isMetadata = True }
+            { s_ | flags = newFlags }
     in
     case readFewBits 1 s of
         ( s1, reserved ) ->
@@ -482,16 +501,25 @@ decodeMetaBlockLength s_ =
         ( s3, inputEnd ) ->
             let
                 s =
-                    { s3
-                        | inputEnd =
-                            if inputEnd == 0 then
-                                False
+                    let
+                        oldFlags =
+                            s3.flags
 
-                            else
-                                True
+                        newFlags =
+                            { oldFlags
+                                | inputEnd =
+                                    if inputEnd == 0 then
+                                        False
+
+                                    else
+                                        True
+                                , isUncompressed = False
+                                , isMetadata = False
+                            }
+                    in
+                    { s3
+                        | flags = newFlags
                         , metaBlockLength = 0
-                        , isUncompressed = False
-                        , isMetadata = False
                     }
 
                 continue s0 =
@@ -513,15 +541,22 @@ decodeMetaBlockLength s_ =
                                     Err e
 
                                 Ok s6 ->
-                                    if s6.inputEnd == False then
+                                    if s6.flags.inputEnd == False then
                                         case readFewBits 1 s6 of
                                             ( s8, uncompressed ) ->
-                                                Ok { s8 | isUncompressed = uncompressed == 1, metaBlockLength = s6.metaBlockLength + 1 }
+                                                let
+                                                    oldFlags =
+                                                        s8.flags
+
+                                                    newFlags =
+                                                        { oldFlags | isUncompressed = uncompressed == 1 }
+                                                in
+                                                Ok { s8 | flags = newFlags, metaBlockLength = s6.metaBlockLength + 1 }
 
                                     else
                                         Ok { s6 | metaBlockLength = s6.metaBlockLength + 1 }
             in
-            if s.inputEnd then
+            if s.flags.inputEnd then
                 case readFewBits 1 s of
                     ( s1, bit ) ->
                         if bit /= 0 then
@@ -538,15 +573,21 @@ decodeWindowBits : State -> ( State, Int )
 decodeWindowBits initial =
     let
         largeWindowEnabled =
-            initial.isLargeWindow
+            initial.flags.isLargeWindow
 
         newState =
             let
                 ( s1, v ) =
                     readFewBitsSafe 1 initial
 
+                oldFlags =
+                    s1.flags
+
+                newFlags =
+                    { oldFlags | isLargeWindow = False }
+
                 s2 =
-                    { s1 | isLargeWindow = False }
+                    { s1 | flags = newFlags }
             in
             if v == 0 then
                 ( s2, 16 )
@@ -571,8 +612,14 @@ decodeWindowBits initial =
 
                             else
                                 let
+                                    oldFlags2 =
+                                        s3.flags
+
+                                    newFlags2 =
+                                        { oldFlags2 | isLargeWindow = True }
+
                                     s4 =
-                                        { s3 | isLargeWindow = True }
+                                        { s3 | flags = newFlags2 }
 
                                     ( s5, w ) =
                                         readFewBits 1 s4
@@ -1535,7 +1582,7 @@ readMetablockHuffmanCodesAndContextMaps =
                                                     { s5 | literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup }
 
                                                 distanceAlphabet =
-                                                    if s.isLargeWindow then
+                                                    if s.flags.isLargeWindow then
                                                         let
                                                             max =
                                                                 calculateDistanceAlphabetSize s6.distancePostfixBits s6.numDirectDistanceCodes 62
@@ -1569,8 +1616,12 @@ readMetablockHuffmanCodesAndContextMaps =
                                                                                 { s8
                                                                                     | contextMapSlice = 0
                                                                                     , distContextMapSlice = 0
-                                                                                    , contextLookupOffset1 = (Array.get 0 s8.contextModes |> Maybe.withDefault 0) * 512
-                                                                                    , contextLookupOffset2 = ((Array.get 0 s8.contextModes |> Maybe.withDefault 0) * 512) + 256
+                                                                                    , contextLookup =
+                                                                                        let
+                                                                                            value =
+                                                                                                Array.Helpers.unsafeGet 0 s8.contextModes * 512
+                                                                                        in
+                                                                                        { offset1 = value, offset2 = value + 256 }
                                                                                     , literalTreeIdx = 0
                                                                                     , commandTreeIdx = 0
                                                                                     , rings =
@@ -1621,7 +1672,7 @@ decodeContextMap contextMapSize contextMap s0 =
                             v + 1
                     in
                     if numTrees == 1 then
-                        Ok ( s2, Array.Helpers.fill 0 0 contextMapSize contextMap, numTrees )
+                        Ok ( s2, Array.repeat contextMapSize 0, numTrees )
 
                     else
                         case readMaxRunLengthPrefix (topUpAccumulator s2) of
@@ -1806,7 +1857,7 @@ decompress written unvalidated =
             work s2 =
                 let
                     fence =
-                        calculateFence written s2
+                        calculateFence s2
                 in
                 decompressHelp
                     { fence = fence
@@ -1905,7 +1956,7 @@ decompressHelp context written s =
                     Ok s2 ->
                         let
                             fence =
-                                calculateFence written s2
+                                calculateFence s2
                         in
                         decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written s2
 
@@ -2158,12 +2209,11 @@ evaluateState7 context prevByte1 prevByte2 s0 =
 
             Ok s1 ->
                 let
-                    -- _ = Debug.log "----> s1 " ( ( s1.pos, s1.bitOffset, s1.accumulator32 ), (prevByte1, prevByte2), (v1,v2) )
                     i1 =
-                        s1.contextLookupOffset1 + prevByte1
+                        s1.contextLookup.offset1 + prevByte1
 
                     i2 =
-                        s1.contextLookupOffset2 + prevByte2
+                        s1.contextLookup.offset2 + prevByte2
 
                     v1 =
                         Array.Helpers.unsafeGet i1 Constants.lookup
@@ -2224,7 +2274,8 @@ evaluateState8 context s =
     if (srcEnd < context.ringBufferMask) && (dstEnd < context.ringBufferMask) then
         let
             newRingBuffer =
-                if copyLength < 12 || (srcEnd > dst && dstEnd > src) then
+                if srcEnd > dst && dstEnd > src then
+                    -- the source and target areas overlap, so we have to be very careful to put values in place before they are read again
                     let
                         go k currentDst currentSrc accum =
                             if k < copyLength then
@@ -2248,6 +2299,25 @@ evaluateState8 context s =
                                             Array.set (currentDst + 3) (Array.Helpers.unsafeGet (currentSrc + 3) a3) a3
                                      in
                                      a4
+                                    )
+
+                            else
+                                accum
+                    in
+                    go 0 dst src s.ringBuffer
+
+                else if copyLength < 12 then
+                    let
+                        go k currentDst currentSrc accum =
+                            if k < copyLength then
+                                go (k + 4)
+                                    (currentDst + 4)
+                                    (currentSrc + 4)
+                                    (accum
+                                        |> Array.set (currentDst + 0) (Array.Helpers.unsafeGet (currentSrc + 0) accum)
+                                        |> Array.set (currentDst + 1) (Array.Helpers.unsafeGet (currentSrc + 1) accum)
+                                        |> Array.set (currentDst + 2) (Array.Helpers.unsafeGet (currentSrc + 2) accum)
+                                        |> Array.set (currentDst + 3) (Array.Helpers.unsafeGet (currentSrc + 3) accum)
                                     )
 
                             else
@@ -2656,8 +2726,12 @@ decodeLiteralBlockSwitch s0 =
                 | contextMapSlice = newContextMapSlice
                 , literalBlockLength = literalBlockLength
                 , literalTreeIdx = newLiteralTreeIdx
-                , contextLookupOffset1 = Bitwise.shiftLeftBy 9 contextMode
-                , contextLookupOffset2 = Bitwise.shiftLeftBy 9 contextMode + 256
+                , contextLookup =
+                    let
+                        value =
+                            Bitwise.shiftLeftBy 9 contextMode
+                    in
+                    { offset1 = value, offset2 = value + 256 }
                 , rings = newRings
             }
 
@@ -2725,27 +2799,22 @@ decodeBlockTypeAndLength treeType numBlockTypes s0 =
                     )
 
 
-calculateFence : Written -> State -> Int
-calculateFence written s =
-    let
-        result =
-            s.ringBufferSize
+calculateFence : State -> Int
+calculateFence s =
+    {-
+       if s.flags.isEager then
+           min result (written.fromRingBuffer + Constants.outputLength - written.toOutput)
 
-        value =
-            if s.isEager then
-                min result (written.fromRingBuffer + Constants.outputLength - written.toOutput)
-
-            else
-                result
-    in
-    value
+       else
+    -}
+    s.ringBufferSize
 
 
-halfAvailable : { state | endOfStreamReached : Bool, halfOffset : Int, tailBytes : Int } -> Int
+halfAvailable : State -> Int
 halfAvailable s =
     let
         limit =
-            if s.endOfStreamReached then
+            if s.flags.endOfStreamReached then
                 Bitwise.shiftRightBy 1 (s.tailBytes + 1)
 
             else
@@ -2859,19 +2928,7 @@ readManyBits n inputS =
                 |> Tuple.mapSecond (\high -> Bitwise.or low (Bitwise.shiftLeftBy 16 high))
 
 
-type alias ReadInputState s =
-    { s
-        | endOfStreamReached : Bool
-        , tailBytes : Int
-        , input : InputStream
-        , byteBuffer : Array Int
-        , halfOffset : Int
-        , shortBuffer : Array Int
-        , pos : Int
-    }
-
-
-maybeReadMoreInput : Int -> ReadInputState s -> Result Error (ReadInputState s)
+maybeReadMoreInput : Int -> State -> Result Error State
 maybeReadMoreInput n s =
     if s.halfOffset > n then
         doReadMoreInput s
@@ -2880,9 +2937,9 @@ maybeReadMoreInput n s =
         Ok s
 
 
-doReadMoreInput : ReadInputState s -> Result Error (ReadInputState s)
+doReadMoreInput : State -> Result Error State
 doReadMoreInput s =
-    if s.endOfStreamReached then
+    if s.flags.endOfStreamReached then
         if halfAvailable s >= -2 then
             Ok s
 
@@ -2906,10 +2963,7 @@ doReadMoreInput s =
                 Ok (bytesToNibbles bytesInBuffer2 s2)
 
 
-doReadMoreInputHelp :
-    Int
-    -> { state | endOfStreamReached : Bool, tailBytes : Int, input : InputStream, byteBuffer : Array Int }
-    -> Result Error ( { state | endOfStreamReached : Bool, tailBytes : Int, input : InputStream, byteBuffer : Array Int }, Int )
+doReadMoreInputHelp : Int -> State -> Result Error ( State, Int )
 doReadMoreInputHelp bytesInBuffer s =
     if bytesInBuffer < 4096 then
         let
@@ -2922,7 +2976,14 @@ doReadMoreInputHelp bytesInBuffer s =
 
             Ok ( s2, len ) ->
                 if len <= 0 then
-                    Ok ( { s2 | endOfStreamReached = True, tailBytes = bytesInBuffer }, bytesInBuffer + 1 )
+                    let
+                        oldFlags =
+                            s2.flags
+
+                        newFlags =
+                            { oldFlags | endOfStreamReached = True }
+                    in
+                    Ok ( { s2 | flags = newFlags, tailBytes = bytesInBuffer }, bytesInBuffer + 1 )
 
                 else
                     doReadMoreInputHelp (bytesInBuffer + len) s2
@@ -3062,11 +3123,7 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , bitOffset = newBitOffset
     , halfOffset = newHalfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = orig.metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = orig.literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
@@ -3083,8 +3140,7 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , insertLength = orig.insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3095,8 +3151,7 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }
 
@@ -3123,11 +3178,7 @@ updateBitOffset newBitOffset orig =
     , bitOffset = newBitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = orig.metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = orig.literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
@@ -3144,8 +3195,7 @@ updateBitOffset newBitOffset orig =
     , insertLength = orig.insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3156,8 +3206,7 @@ updateBitOffset newBitOffset orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }
 
@@ -3184,11 +3233,7 @@ copyState7 newPos newJ newRingBuffer literalBlockLength orig =
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = orig.metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
@@ -3205,8 +3250,7 @@ copyState7 newPos newJ newRingBuffer literalBlockLength orig =
     , insertLength = orig.insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3217,8 +3261,7 @@ copyState7 newPos newJ newRingBuffer literalBlockLength orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }
 
@@ -3245,11 +3288,7 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = orig.literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
@@ -3266,8 +3305,7 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , insertLength = orig.insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3278,8 +3316,7 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }
 
@@ -3306,11 +3343,7 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = orig.literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
@@ -3327,8 +3360,7 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , insertLength = orig.insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3339,8 +3371,7 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }
 
@@ -3367,11 +3398,7 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = orig.metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = orig.literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = commandBlockLength
@@ -3388,8 +3415,7 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , insertLength = insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3400,8 +3426,7 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }
 
@@ -3428,11 +3453,7 @@ updateRunningState runningState orig =
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = orig.metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = orig.literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
@@ -3449,8 +3470,7 @@ updateRunningState runningState orig =
     , insertLength = orig.insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3461,8 +3481,7 @@ updateRunningState runningState orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }
 
@@ -3489,11 +3508,7 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = orig.literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
@@ -3510,8 +3525,7 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , insertLength = orig.insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3522,8 +3536,7 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }
 
@@ -3552,11 +3565,7 @@ copyState orig =
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
-    , endOfStreamReached = orig.endOfStreamReached
     , metaBlockLength = orig.metaBlockLength
-    , inputEnd = orig.inputEnd
-    , isUncompressed = orig.isUncompressed
-    , isMetadata = orig.isMetadata
     , literalBlockLength = orig.literalBlockLength
     , numLiteralBlockTypes = orig.numLiteralBlockTypes
     , commandBlockLength = orig.commandBlockLength
@@ -3573,8 +3582,7 @@ copyState orig =
     , insertLength = orig.insertLength
     , contextMapSlice = orig.contextMapSlice
     , distContextMapSlice = orig.distContextMapSlice
-    , contextLookupOffset1 = orig.contextLookupOffset1
-    , contextLookupOffset2 = orig.contextLookupOffset2
+    , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
     , numDirectDistanceCodes = orig.numDirectDistanceCodes
     , distancePostfixMask = orig.distancePostfixMask
@@ -3585,7 +3593,6 @@ copyState orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , isEager = orig.isEager
-    , isLargeWindow = orig.isLargeWindow
+    , flags = orig.flags
     , input = orig.input
     }

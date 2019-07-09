@@ -34,7 +34,7 @@ result =
 This is an awful format to implement, especially when porting c-style javascript code to a functional language like elm.
 Therefore: 
 
-* the implementation is slow 
+* the implementation is relatively slow, ~5MB/s (huge error bars on that number)
 * there are probably still bugs (likely with 1-character fixes)
 
 If you run into these issues with a specific input, let me know.
