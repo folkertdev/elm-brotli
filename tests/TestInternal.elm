@@ -443,7 +443,7 @@ bug1 =
                     expected =
                         Array.fromList [ 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 65544, 0, 0 ]
                 in
-                Internal.replicateValue data 0 2 32 65544
+                Array.Helpers.replicateValue data 0 2 32 65544
                     |> Expect.equal expected
         , test "calculateDistanceLut" <|
             \_ ->
