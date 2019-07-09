@@ -1,4 +1,4 @@
-module Internal exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, encodeByteArray, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, sortSymbols, topUpAccumulator)
+module Internal exposing (Error(..), buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, encodeByteArray, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, sortSymbols, topUpAccumulator)
 
 import Array exposing (Array)
 import Array.Helpers
@@ -11,7 +11,7 @@ import Transforms
 
 
 type Error
-    = MaxDistanceTooSmall
+    = MaxDistanceTooSmall { actual : Int, minimal : Int }
     | StateNotInitialized
     | ReadAfterEnd
     | UnusedByteAfterEnd
@@ -21,8 +21,8 @@ type Error
     | CorruptedHuffmanHistogram
     | CustomError String
     | UnusedSpace
-    | NoHuffmanCode
-    | CorruptedCnotextMap
+    | NoHuffmanCode Int
+    | CorruptedContextMap
     | InvalidWindowBits
     | InvalidMetablockLength
     | InvalidBackwardReference String
@@ -179,7 +179,7 @@ calculateDistanceAlphabetSize npostfix ndirect maxndistbits =
 calculateDistanceAlphabetLimit : Int -> Int -> Int -> Result Error Int
 calculateDistanceAlphabetLimit maxDistance npostfix ndirect =
     if maxDistance < ndirect + Bitwise.shiftLeftBy npostfix 2 then
-        Err MaxDistanceTooSmall
+        Err (MaxDistanceTooSmall { actual = maxDistance, minimal = ndirect + Bitwise.shiftLeftBy npostfix 2 })
 
     else
         let
@@ -948,7 +948,7 @@ readSimpleHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s0 =
                     ( newS, symbol ) ->
                         if symbol >= alphabetSizeLimit then
                             -- there is no huffman code for this symbol
-                            Err NoHuffmanCode
+                            Err (NoHuffmanCode symbol)
 
                         else
                             go (i + 1) numSymbols newS (Array.push symbol acc)
@@ -1646,7 +1646,7 @@ decodeContextMap contextMapSize contextMap s0 =
                                             go2 i reps currentContextMap =
                                                 if reps /= 0 then
                                                     if i >= contextMapSize then
-                                                        Err CorruptedCnotextMap
+                                                        Err CorruptedContextMap
 
                                                     else
                                                         go2 (i + 1) (reps - 1) (Array.set i 0 currentContextMap)
