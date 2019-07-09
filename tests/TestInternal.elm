@@ -368,6 +368,25 @@ bug2 =
                 in
                 Internal.calculateOffsets
                     |> Expect.equal ( insert, copy )
+        , fuzz (Fuzz.list (Fuzz.intRange 0 255)) "encodeByteArray" <|
+            \bytes ->
+                let
+                    n =
+                        List.length bytes
+
+                    new =
+                        Internal.encodeByteArray (Array.fromList bytes)
+                            |> Encode.encode
+                            |> Decode.decode (Internal.array n Decode.unsignedInt8)
+
+                    old =
+                        List.map Encode.unsignedInt8 bytes
+                            |> Encode.sequence
+                            |> Encode.encode
+                            |> Decode.decode (Internal.array n Decode.unsignedInt8)
+                in
+                new
+                    |> Expect.equal old
         ]
 
 

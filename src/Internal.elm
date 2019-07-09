@@ -1,8 +1,8 @@
-module Internal exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, calculateOffsets, charCodeAt, cmd_lookup, decode, decompress, dictionary_data, generateCount, generateOffsets, inverseMoveToFrontTransform, lookup, moveToFront, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
+module Internal exposing (array, buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, calculateOffsets, charCodeAt, cmd_lookup, decode, decompress, dictionary_data, encodeByteArray, generateCount, generateOffsets, inverseMoveToFrontTransform, lookup, moveToFront, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
 
 import Array exposing (Array)
 import Bitwise
-import Bytes exposing (Bytes)
+import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode as Decode exposing (Step(..))
 import Bytes.Encode as Encode
 import DictionaryData
@@ -10,7 +10,6 @@ import Transforms
 
 
 log =
-    -- Debug.log
     \_ -> identity
 
 
@@ -363,13 +362,10 @@ type alias State =
     , maxRingBufferSize : Int
     , ringBufferSize : Int
     , expectedTotalSize : Int
-    , outputOffset : Int
-    , outputLength : Int
-    , outputUsed : Int
-    , ringBufferBytesWritten : Int
     , isEager : Bool
     , isLargeWindow : Bool
     , input : InputStream
+    , written : { fromRingBuffer : Int, toOutput : Int }
     }
 
 
@@ -429,13 +425,10 @@ defaultState buffer =
     , maxRingBufferSize = 0
     , ringBufferSize = 0
     , expectedTotalSize = 0
-    , outputOffset = 0
-    , outputLength = 0
-    , outputUsed = 0
-    , ringBufferBytesWritten = 0
     , isEager = False
     , isLargeWindow = False
     , input = { offset = 0, buffer = buffer }
+    , written = { fromRingBuffer = 0, toOutput = 0 }
     }
 
 
@@ -2248,15 +2241,78 @@ decompress unvalidated =
 
             Ok ( r, _ ) ->
                 Ok
-                    ( r
-                        |> .output
-                        |> Array.slice 0 r.outputUsed
-                        |> Array.map Encode.unsignedInt8
-                        |> Array.toList
-                        |> Encode.sequence
+                    ( r.output
+                        |> Array.slice 0 r.written.toOutput
+                        |> encodeByteArray
                         |> Encode.encode
                     , r
                     )
+
+
+encodeByteArray : Array Int -> Encode.Encoder
+encodeByteArray arr =
+    let
+        bytes =
+            Array.toList arr
+
+        {- NOTE the bytes can infact use more than the first 8 bits, so we have to mask them -}
+        go remaining encoders =
+            case remaining of
+                x :: y :: z :: w :: rest ->
+                    let
+                        value =
+                            Bitwise.or
+                                (Bitwise.or (Bitwise.shiftLeftBy 24 x) (Bitwise.shiftLeftBy 16 (Bitwise.and 0xFF y)))
+                                (Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF z)) (Bitwise.and 0xFF w))
+                    in
+                    go rest (Encode.unsignedInt32 BE value :: encoders)
+
+                [] ->
+                    encoders
+
+                [ x ] ->
+                    Encode.unsignedInt8 x :: encoders
+
+                [ x, y ] ->
+                    let
+                        value =
+                            Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF x)) (Bitwise.and 0xFF y)
+                    in
+                    Encode.unsignedInt16 BE value :: encoders
+
+                [ x, y, z ] ->
+                    let
+                        value =
+                            Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF x)) (Bitwise.and 0xFF y)
+                    in
+                    Encode.unsignedInt8 z :: Encode.unsignedInt16 BE value :: encoders
+
+        {-
+           [ x, y ] ->
+               let
+                   value =
+                       Bitwise.or (Bitwise.shiftLeftBy 8 x) y
+               in
+               Encode.unsignedInt16 BE value :: encoders
+
+           [ x, y, z ] ->
+               let
+                   value =
+                       Bitwise.or (Bitwise.shiftLeftBy 8 x) y
+               in
+               go [ y, z ] (Encode.unsignedInt8 x :: encoders)
+           x :: y :: z :: w :: rest ->
+               let
+                   value =
+                       Bitwise.or
+                           (Bitwise.or (Bitwise.shiftLeftBy 24 x) (Bitwise.shiftLeftBy 16 y))
+                           (Bitwise.or (Bitwise.shiftLeftBy 8 z) w)
+               in
+
+               go rest (Encode.unsignedInt32 BE value :: encoders)
+        -}
+    in
+    Encode.sequence (List.reverse (go bytes []))
 
 
 type alias Context =
@@ -2271,13 +2327,6 @@ decompressHelp context s =
         _ =
             -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
             log "state" s.runningState
-
-        _ =
-            if False then
-                Debug.todo "crash"
-
-            else
-                ()
     in
     case s.runningState of
         10 ->
@@ -2416,12 +2465,12 @@ decompressHelp context s =
                     -- with no clear gain in speed because of fewer record updates
                     -- but that is weird right, because both methods should be generating the same amount of garbage?
                     if newPos >= context.fence then
-                        -- decompressHelp context (updateEvaluateState9 4 12 newRingBuffer (s.pos + len) newMetaBlockLength s)
-                        decompressHelp context { s | nextRunningState = 4, runningState = 13, ringBuffer = newRingBuffer, pos = s.pos + len, metaBlockLength = newMetaBlockLength }
+                        decompressHelp context (updateEvaluateState9 4 13 newRingBuffer (s.pos + len) newMetaBlockLength s)
+                        --decompressHelp context { s | nextRunningState = 4, runningState = 13, ringBuffer = newRingBuffer, pos = s.pos + len, metaBlockLength = newMetaBlockLength }
 
                     else
-                        -- decompressHelp context (updateEvaluateState9 s.nextRunningState 4 newRingBuffer (s.pos + len) newMetaBlockLength s)
-                        decompressHelp context { s | runningState = 4, ringBuffer = newRingBuffer, pos = s.pos + len, metaBlockLength = newMetaBlockLength }
+                        -- decompressHelp context { s | runningState = 4, ringBuffer = newRingBuffer, pos = s.pos + len, metaBlockLength = newMetaBlockLength }
+                        decompressHelp context (updateEvaluateState9 s.nextRunningState 4 newRingBuffer (s.pos + len) newMetaBlockLength s)
 
                 else
                     Err "Invalid backward reference 2"
@@ -2453,14 +2502,6 @@ decompressHelp context s =
 
                         s1 =
                             s0
-
-                        {-
-                           if s0.pos >= s0.maxBackwardDistance then
-                               { s0 | maxDistance = s0.maxBackwardDistance }
-
-                           else
-                               s0
-                        -}
                     in
                     if s1.pos >= s1.ringBufferSize then
                         let
@@ -2470,7 +2511,7 @@ decompressHelp context s =
                         decompressHelp context
                             { s1
                                 | pos = Bitwise.and s1.pos context.ringBufferMask
-                                , ringBufferBytesWritten = 0
+                                , written = { fromRingBuffer = 0, toOutput = s1.written.toOutput }
                                 , runningState = s1.nextRunningState
                                 , ringBuffer = newRingBuffer
                                 , maxDistance = newMaxDistance
@@ -2852,10 +2893,10 @@ writeRingBuffer : Int -> State -> ( State, Int )
 writeRingBuffer ringBufferBytesReady s =
     let
         toWrite =
-            min (s.outputLength - s.outputUsed) (ringBufferBytesReady - s.ringBufferBytesWritten)
+            min (outputLength - s.written.toOutput) (ringBufferBytesReady - s.written.fromRingBuffer)
 
         wasThereWritten state =
-            if state.outputUsed < state.outputLength then
+            if state.written.toOutput < outputLength then
                 1
 
             else
@@ -2865,14 +2906,16 @@ writeRingBuffer ringBufferBytesReady s =
             if toWrite /= 0 then
                 let
                     slice =
-                        Array.slice s.ringBufferBytesWritten (s.ringBufferBytesWritten + toWrite) s.ringBuffer
+                        Array.slice s.written.fromRingBuffer (s.written.fromRingBuffer + toWrite) s.ringBuffer
 
                     newOutput =
-                        -- setArraySlice (Array.slice s.ringBufferBytesWritten (s.ringBufferBytesWritten + toWrite) s.ringBuffer) (s.outputOffset + s.outputUsed) s.output
                         Array.append s.output slice
 
+                    newWritten =
+                        { toOutput = s.written.toOutput + toWrite, fromRingBuffer = s.written.fromRingBuffer + toWrite }
+
                     s2 =
-                        { s | output = newOutput, outputUsed = s.outputUsed + toWrite, ringBufferBytesWritten = s.ringBufferBytesWritten + toWrite }
+                        { s | output = newOutput, written = newWritten }
                 in
                 s2
 
@@ -3159,7 +3202,7 @@ calculateFence s =
 
         value =
             if s.isEager then
-                min result (s.ringBufferBytesWritten + s.outputLength - s.outputUsed)
+                min result (s.written.fromRingBuffer + outputLength - s.written.toOutput)
 
             else
                 result
@@ -3509,6 +3552,11 @@ array tableCount decoder =
     Decode.loop ( tableCount, Array.empty ) helper
 
 
+outputLength : Int
+outputLength =
+    16384
+
+
 decode : Bytes -> Result Error Bytes
 decode input =
     case initState (defaultState input) of
@@ -3517,20 +3565,17 @@ decode input =
 
         Ok s ->
             let
-                initialOutput =
-                    Array.repeat 16384 0
-
                 decodeLoop state chunks =
-                    case decompress { state | outputLength = 16384, outputOffset = 0, outputUsed = 0, output = Array.empty } of
+                    case decompress { state | written = { toOutput = 0, fromRingBuffer = state.written.fromRingBuffer }, output = Array.empty } of
                         Err e ->
                             Err e
 
                         Ok ( buffer, newState ) ->
                             if Bytes.width buffer < 16384 then
-                                Ok (List.reverse (buffer :: chunks))
+                                Ok (List.reverse (Encode.bytes buffer :: chunks))
 
                             else
-                                decodeLoop newState (buffer :: chunks)
+                                decodeLoop newState (Encode.bytes buffer :: chunks)
             in
             case decodeLoop s [] of
                 Err e ->
@@ -3538,7 +3583,6 @@ decode input =
 
                 Ok v ->
                     v
-                        |> List.map Encode.bytes
                         |> Encode.sequence
                         |> Encode.encode
                         |> Ok
@@ -3600,13 +3644,10 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
+    , written = orig.written
     }
 
 
@@ -3666,10 +3707,7 @@ updateBitOffset newBitOffset orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , written = orig.written
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
@@ -3732,10 +3770,7 @@ copyState7 newPos newJ newRingBuffer literalBlockLength orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , written = orig.written
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
@@ -3798,10 +3833,7 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , written = orig.written
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
@@ -3864,10 +3896,7 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , written = orig.written
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
@@ -3930,10 +3959,7 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , written = orig.written
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
@@ -3996,10 +4022,7 @@ updateRunningState runningState orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , written = orig.written
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
@@ -4062,10 +4085,7 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , written = orig.written
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
@@ -4130,10 +4150,7 @@ copyState orig =
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
     , expectedTotalSize = orig.expectedTotalSize
-    , outputOffset = orig.outputOffset
-    , outputLength = orig.outputLength
-    , outputUsed = orig.outputUsed
-    , ringBufferBytesWritten = orig.ringBufferBytesWritten
+    , written = orig.written
     , isEager = orig.isEager
     , isLargeWindow = orig.isLargeWindow
     , input = orig.input
