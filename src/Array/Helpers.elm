@@ -1,16 +1,35 @@
-module Array.Helpers exposing (unsafeGet, setSlice, inverseMoveToFrontTransform, fill, update, moveToFront, copyWithin, decodeArray)
+module Array.Helpers exposing (unsafeGet, setSlice, inverseMoveToFrontTransform, fill, update, moveToFront, copyWithin, decodeArray, replicateValue)
 
 import Array exposing (Array)
 import Bitwise
 
 import Bytes.Decode  as Decode exposing (Decoder)
-import Bytes
+
+
+{-| TODO test
+-}
+replicateValue : Array a -> Int -> Int -> Int -> a  -> Array a
+replicateValue table offset step end item =
+    let
+        newEnd =
+            end - step
+
+        newTable =
+            Array.set (offset + newEnd) item table
+    in
+    if newEnd > 0 then
+        replicateValue newTable offset step newEnd item
+
+    else
+        newTable
 
 
 decodeArray : Int -> Decoder a -> Decoder (Array a)
 decodeArray n decoder = 
     Decode.loop (n, Array.empty) (decodeArrayHelp decoder)
 
+
+decodeArrayHelp : Decoder a -> (Int, Array a) -> Decoder (Decode.Step (Int, Array a) (Array a) )
 decodeArrayHelp decoder (remaining, accum ) = 
     if remaining > 0 then 
         decoder |> Decode.map (\new -> Decode.Loop (remaining - 1, Array.push new accum ))

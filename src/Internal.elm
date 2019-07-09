@@ -1,4 +1,4 @@
-module Internal exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, encodeByteArray, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
+module Internal exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, encodeByteArray, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, sortSymbols, topUpAccumulator)
 
 import Array exposing (Array)
 import Array.Helpers
@@ -8,10 +8,6 @@ import Bytes.Decode as Decode exposing (Step(..))
 import Bytes.Encode as Encode
 import Constants
 import Transforms
-
-
-log =
-    \_ -> identity
 
 
 type alias Error =
@@ -164,6 +160,7 @@ calculateDistanceAlphabetSize npostfix ndirect maxndistbits =
     16 + ndirect + 2 * Bitwise.shiftLeftBy npostfix maxndistbits
 
 
+calculateDistanceAlphabetLimit : Int -> Int -> Int -> Result Error Int
 calculateDistanceAlphabetLimit maxDistance npostfix ndirect =
     if maxDistance < ndirect + Bitwise.shiftLeftBy npostfix 2 then
         Err "maxDistance is too small"
@@ -182,6 +179,7 @@ calculateDistanceAlphabetLimit maxDistance npostfix ndirect =
         Ok (Bitwise.shiftLeftBy npostfix (group - 1) + Bitwise.shiftLeftBy npostfix 1 + ndirect + 16)
 
 
+log2floor : Int -> Int
 log2floor v =
     let
         go i step result =
@@ -227,6 +225,7 @@ prepare unverified =
         |> Result.map putOnAccumulator
 
 
+reload : State -> Result Error State
 reload s =
     if s.bitOffset == 32 then
         prepare s
@@ -417,7 +416,7 @@ decodeMetaBlockBytes s_ =
                             Err "Exuberant byte"
 
                         else
-                            -- TODO remove this record update
+                            -- @optimize remove this record update
                             byteLoop (i + 1) sizeBytes { s2 | metaBlockLength = Bitwise.or s2.metaBlockLength (Bitwise.shiftLeftBy (i * 8) bits) }
 
             else
@@ -449,10 +448,10 @@ decodeMetaBlockNibbles numberOfNibbles s =
                 case readFewBitsSafe 4 state_ of
                     ( s2, bits ) ->
                         if bits == 0 && i + 1 == sizeNibbles && sizeNibbles > 4 then
-                            Err (log "error" "Exuberant nibble")
+                            Err "Exuberant nibble"
 
                         else
-                            -- TODO remove record update
+                            -- @optimize remove record update
                             nibbleLoop (i + 1) sizeNibbles { s2 | metaBlockLength = Bitwise.or s2.metaBlockLength (Bitwise.shiftLeftBy (i * 4) bits) }
 
             else
@@ -776,7 +775,7 @@ readComplexHuffmanCode alphabetSizeLimit skip tableGroup tableIdx state =
 readHuffmanCodeLengths : Array Int -> Int -> Array Int -> State -> Result Error ( State, Array Int )
 readHuffmanCodeLengths codeLengthCodeLengths numSymbols initialCodeLengths state =
     let
-        -- TODO could use Array.push instead of Array.set, as elements are created order
+        -- @optimize could use Array.push instead of Array.set, as elements are created order
         go :
             Array Int
             -> Int
@@ -1092,8 +1091,10 @@ sortSymbols init =
     go 0 (Array.repeat init.codeLengthsSize 0) init.offset
 
 
+phase1 : Int -> Int -> Int -> Array Int -> Array Int -> Int -> Int -> Int -> Int -> Array Int -> ( ( Array Int, Int ), Int, Array Int )
 phase1 rootBits tableOffset tableSize sorted =
     let
+        loop1 : Array Int -> Int -> Int -> Int -> Int -> Array Int -> ( ( Array Int, Int ), Int, Array Int )
         loop1 currentCount len key symbol step currentTableGroup =
             if len <= rootBits then
                 case loop2 currentCount len key symbol step (Array.Helpers.unsafeGet len currentCount) currentTableGroup of
@@ -1107,7 +1108,7 @@ phase1 rootBits tableOffset tableSize sorted =
             if Array.Helpers.unsafeGet len currentCount > 0 then
                 let
                     newTableGroup =
-                        replicateValue currentTableGroup (tableOffset + key) step tableSize (Bitwise.or (Bitwise.shiftLeftBy 16 len) (Array.Helpers.unsafeGet symbol sorted))
+                        Array.Helpers.replicateValue currentTableGroup (tableOffset + key) step tableSize (Bitwise.or (Bitwise.shiftLeftBy 16 len) (Array.Helpers.unsafeGet symbol sorted))
 
                     newSymbol =
                         symbol + 1
@@ -1194,6 +1195,7 @@ buildHuffmanTable tableGroup tableIdx rootBits codeLengths_ =
         huffmanTableLoop3 sorted mask tableOffset rootBits varstate
 
 
+nextTableBitSize : Array Int -> Int -> Int -> Int
 nextTableBitSize count initialLen rootBits =
     let
         initialLeft =
@@ -1217,7 +1219,24 @@ nextTableBitSize count initialLen rootBits =
     go initialLen initialLeft
 
 
+type alias TableLoopState =
+    { count : Array Int
+    , currentOffset : Int
+    , currentTableGroup : Array Int
+    , key : Int
+    , len : Int
+    , low : Int
+    , step : Int
+    , symbol : Int
+    , tableBits : Int
+    , tableSize : Int
+    , totalSize : Int
+    }
+
+
+huffmanTableLoop3 : Array Int -> Int -> Int -> Int -> TableLoopState -> { tableGroup : Array Int, total_size : Int }
 huffmanTableLoop3 sorted mask tableOffset rootBits state =
+    -- @optimize len and step fields?
     if state.len <= 15 then
         let
             newState =
@@ -1229,7 +1248,8 @@ huffmanTableLoop3 sorted mask tableOffset rootBits state =
         { tableGroup = state.currentTableGroup, total_size = state.totalSize }
 
 
-huffmanTableLoop4 sorted mask tableOffset rootBits ({ count, len, key, symbol, step, currentTableGroup, currentOffset, tableBits, tableSize, totalSize, low } as state) =
+huffmanTableLoop4 : Array Int -> Int -> Int -> Int -> TableLoopState -> TableLoopState
+huffmanTableLoop4 sorted mask tableOffset rootBits ({ count, len, key, currentTableGroup, currentOffset, tableSize, totalSize, low } as state) =
     if Array.Helpers.unsafeGet len count > 0 then
         if Bitwise.and key mask /= low then
             let
@@ -1278,10 +1298,11 @@ huffmanTableLoop4 sorted mask tableOffset rootBits ({ count, len, key, symbol, s
         state
 
 
-finalize sorted rootBits ({ count, len, key, symbol, step, currentTableGroup, currentOffset, tableBits, tableSize, totalSize, low } as state) =
+finalize : Array Int -> Int -> TableLoopState -> TableLoopState
+finalize sorted rootBits ({ count, len, key, symbol, step, currentTableGroup, currentOffset, tableSize } as state) =
     { state
         | currentTableGroup =
-            replicateValue
+            Array.Helpers.replicateValue
                 currentTableGroup
                 (currentOffset + Bitwise.shiftRightBy rootBits key)
                 step
@@ -1293,26 +1314,9 @@ finalize sorted rootBits ({ count, len, key, symbol, step, currentTableGroup, cu
     }
 
 
-{-| TODO test
--}
-replicateValue table offset step end item =
-    let
-        newEnd =
-            end - step
-
-        newTable =
-            Array.set (offset + newEnd) item table
-    in
-    if newEnd > 0 then
-        replicateValue newTable offset step newEnd item
-
-    else
-        newTable
-
-
 checkDupes : Array Int -> Result String (Array Int)
 checkDupes symbols =
-    -- TODO optimize
+    -- @optimize
     let
         go list =
             case list of
@@ -1514,7 +1518,7 @@ readMetablockHuffmanCodesAndContextMaps =
                         in
                         case decodeContextMap distanceSize (Array.repeat distanceSize 0) s2 of
                             Err e ->
-                                Err (log "got an error after decoding context map" e)
+                                Err e
 
                             Ok ( s3, distContextMap, numDistTrees ) ->
                                 let
@@ -1636,7 +1640,7 @@ decodeContextMap contextMapSize contextMap s0 =
                                 in
                                 case readHuffmanCode alphabetSize alphabetSize (Array.repeat (tableSize + 1) 0) tableIdx s3 of
                                     Err e ->
-                                        Err (log "error after reading huffman code" e)
+                                        Err e
 
                                     Ok ( s4, table ) ->
                                         let
@@ -1719,7 +1723,12 @@ decodeHuffmanTreeGroup alphabetSizeMax alphabetSizeLimit n =
 
 
 type alias LutState a =
-    { a | distExtraBits : Array Int, distOffset : Array Int, distancePostfixBits : Int, numDirectDistanceCodes : Int }
+    { a
+        | distExtraBits : Array Int
+        , distOffset : Array Int
+        , distancePostfixBits : Int
+        , numDirectDistanceCodes : Int
+    }
 
 
 calculateDistanceLut : Int -> LutState a -> LutState a
@@ -1880,11 +1889,7 @@ type alias Written =
 
 decompressHelp : Context -> Written -> State -> Result Error ( State, Context, Written )
 decompressHelp context written s =
-    let
-        _ =
-            -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
-            log "state" s.runningState
-    in
+    -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
     case s.runningState of
         10 ->
             Ok ( s, context, written )
@@ -1914,7 +1919,7 @@ decompressHelp context written s =
                     decompressHelp context written (updateRunningState 4 s2)
 
         4 ->
-            case evaluateState4 context s of
+            case evaluateState4 s of
                 Err e ->
                     Err e
 
@@ -1931,7 +1936,7 @@ decompressHelp context written s =
                         else
                             state
 
-                    go currentContext s0 =
+                    go s0 =
                         if s0.j < s0.insertLength then
                             case maybeReadMoreInput 2030 s0 |> Result.map (maybeLiteral >> topUpAccumulator) of
                                 Err e ->
@@ -1948,15 +1953,15 @@ decompressHelp context written s =
                                                     s2.pos + 1
                                             in
                                             if newPos >= context.fence then
-                                                remainder7 context { s2 | nextRunningState = 7, runningState = 13, pos = s2.pos + 1, j = s2.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s2.literalBlockLength - 1 }
+                                                remainder7 { s2 | nextRunningState = 7, runningState = 13, pos = s2.pos + 1, j = s2.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s2.literalBlockLength - 1 }
 
                                             else
-                                                go context (copyState7 newPos (s2.j + 1) newRingBuffer (s2.literalBlockLength - 1) s2)
+                                                go (copyState7 newPos (s2.j + 1) newRingBuffer (s2.literalBlockLength - 1) s2)
 
                         else
-                            remainder7 currentContext { s0 | literalBlockLength = s0.literalBlockLength - 1 }
+                            remainder7 { s0 | literalBlockLength = s0.literalBlockLength - 1 }
                 in
-                case go context s of
+                case go s of
                     Err e ->
                         Err e
 
@@ -2018,15 +2023,10 @@ decompressHelp context written s =
                         newPos =
                             s.pos + len
                     in
-                    -- TODO curiously, using a custom update function here seems to be bad; it increases GC time a lot
-                    -- with no clear gain in speed because of fewer record updates
-                    -- but that is weird right, because both methods should be generating the same amount of garbage?
                     if newPos >= context.fence then
                         decompressHelp context written (updateEvaluateState9 4 13 newRingBuffer (s.pos + len) newMetaBlockLength s)
-                        --decompressHelp context { s | nextRunningState = 4, runningState = 13, ringBuffer = newRingBuffer, pos = s.pos + len, metaBlockLength = newMetaBlockLength }
 
                     else
-                        -- decompressHelp context { s | runningState = 4, ringBuffer = newRingBuffer, pos = s.pos + len, metaBlockLength = newMetaBlockLength }
                         decompressHelp context written (updateEvaluateState9 s.nextRunningState 4 newRingBuffer (s.pos + len) newMetaBlockLength s)
 
                 else
@@ -2086,8 +2086,8 @@ decompressHelp context written s =
             Ok ( s, context, written )
 
 
-evaluateState4 : Context -> State -> Result Error State
-evaluateState4 context s =
+evaluateState4 : State -> Result Error State
+evaluateState4 s =
     if s.metaBlockLength <= 0 then
         Ok { s | runningState = 2 }
 
@@ -2195,13 +2195,13 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                                 s3.pos + 1
                         in
                         if newPos >= context.fence then
-                            remainder7 context { s3 | nextRunningState = 7, runningState = 13, pos = newPos, j = s3.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s3.literalBlockLength - 1 }
+                            remainder7 { s3 | nextRunningState = 7, runningState = 13, pos = newPos, j = s3.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s3.literalBlockLength - 1 }
 
                         else
                             evaluateState7 context byte1 byte2 (copyState7 newPos (s3.j + 1) newRingBuffer (s3.literalBlockLength - 1) s3)
 
     else
-        remainder7 context s0
+        remainder7 s0
 
 
 evaluateState8 : Context -> State -> State
@@ -2339,6 +2339,7 @@ copyUncompressedData s =
                         |> Result.map (\state -> { state | runningState = 2 })
 
 
+copyBytesToRingBuffer : Int -> Int -> Array Int -> State -> Result Error ( State, Array Int )
 copyBytesToRingBuffer offset length data s =
     -- NOTE data is the ringbufffer
     if Bitwise.and s.bitOffset 7 /= 0 then
@@ -2439,13 +2440,6 @@ writeRingBuffer ringBufferBytesReady written s =
         toWrite =
             min (Constants.outputLength - written.toOutput) (ringBufferBytesReady - written.fromRingBuffer)
 
-        wasThereWritten state =
-            if written.toOutput < Constants.outputLength then
-                1
-
-            else
-                0
-
         newerWritten =
             if toWrite /= 0 then
                 let
@@ -2467,12 +2461,8 @@ writeRingBuffer ringBufferBytesReady written s =
     ( newerWritten.toOutput < Constants.outputLength, newerWritten )
 
 
-remainder7 : Context -> State -> Result Error State
-remainder7 context s =
-    let
-        _ =
-            log "state in remainder " ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
-    in
+remainder7 : State -> Result Error State
+remainder7 s =
     if s.runningState /= 7 then
         Ok s
 
@@ -2684,6 +2674,7 @@ decodeDistanceBlockSwitch s0 =
             }
 
 
+decodeCommandBlockSwitch : State -> State
 decodeCommandBlockSwitch s0 =
     case decodeBlockTypeAndLength 1 s0.numCommandBlockTypes s0 of
         ( s1, newRings, v ) ->
@@ -2941,14 +2932,7 @@ doReadMoreInputHelp bytesInBuffer s =
         Ok ( s, bytesInBuffer )
 
 
-overflow8 v =
-    if v > 2 ^ 7 then
-        v - 2 ^ 8
-
-    else
-        v
-
-
+overflow16 : Int -> Int
 overflow16 v =
     if v > 2 ^ 15 then
         v - 2 ^ 16
@@ -3017,38 +3001,6 @@ readInput offset length s =
                     Array.Helpers.setSlice newSegment offset s.byteBuffer
             in
             Ok ( { s | input = newInput, byteBuffer = newByteBuffer }, bytesRead )
-
-        Nothing ->
-            Err "readInput: insufficient input"
-
-
-readInputToArray :
-    Int
-    -> Int
-    -> Array Int
-    -> { state | input : InputStream }
-    -> Result Error ( { state | input : InputStream }, Array Int, Int )
-readInputToArray offset length data s =
-    let
-        end =
-            min (s.input.offset + length) (Bytes.width s.input.buffer)
-
-        bytesRead =
-            end - s.input.offset
-
-        decoder =
-            Decode.map2 (\_ v -> v) (Decode.bytes offset) (Array.Helpers.decodeArray bytesRead Decode.unsignedInt8)
-    in
-    case Decode.decode decoder s.input.buffer of
-        Just newSegment ->
-            let
-                oldInput =
-                    s.input
-
-                newInput =
-                    { oldInput | offset = oldInput.offset + bytesRead }
-            in
-            Ok ( { s | input = newInput }, Array.append (Array.slice 0 offset data) newSegment, bytesRead )
 
         Nothing ->
             Err "readInput: insufficient input"
