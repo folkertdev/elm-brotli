@@ -3,7 +3,7 @@
     "name": "folkertdev/elm-brotli",
     "summary": "A Brotli decoder for elm",
     "license": "BSD-3-Clause",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "exposed-modules": [
         "Brotli"
     ],
