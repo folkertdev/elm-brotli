@@ -10,8 +10,24 @@ import Constants
 import Transforms
 
 
-type alias Error =
-    String
+type Error
+    = MaxDistanceTooSmall
+    | StateNotInitialized
+    | ReadAfterEnd
+    | UnusedByteAfterEnd
+    | ExuberantNibble
+    | ExuberantByte
+    | CorruptedReservedBit
+    | CorruptedHuffmanHistogram
+    | CustomError String
+    | UnusedSpace
+    | NoHuffmanCode
+    | CorruptedCnotextMap
+    | InvalidWindowBits
+    | InvalidMetablockLength
+    | InvalidBackwardReference String
+    | UnalignedCopyBytes
+    | CorruptedPaddingBits
 
 
 type alias State =
@@ -138,7 +154,7 @@ defaultState buffer =
 initState : State -> Result Error State
 initState s =
     if s.runningState /= 0 then
-        Err "State MUST be uninitialized"
+        Err StateNotInitialized
 
     else
         calculateDistanceAlphabetLimit 0x7FFFFFFC 3 (Bitwise.shiftLeftBy 3 15)
@@ -163,7 +179,7 @@ calculateDistanceAlphabetSize npostfix ndirect maxndistbits =
 calculateDistanceAlphabetLimit : Int -> Int -> Int -> Result Error Int
 calculateDistanceAlphabetLimit maxDistance npostfix ndirect =
     if maxDistance < ndirect + Bitwise.shiftLeftBy npostfix 2 then
-        Err "maxDistance is too small"
+        Err MaxDistanceTooSmall
 
     else
         let
@@ -245,10 +261,10 @@ checkHealth endOfStream s =
                 Bitwise.shiftLeftBy 1 s.halfOffset + Bitwise.shiftRightBy 3 (s.bitOffset + 7) - 4
         in
         if byteOffset > s.tailBytes then
-            Err "Read after end"
+            Err ReadAfterEnd
 
         else if endOfStream && (byteOffset /= s.tailBytes) then
-            Err "Unused bytes after end"
+            Err UnusedByteAfterEnd
 
         else
             Ok s
@@ -413,7 +429,7 @@ decodeMetaBlockBytes s_ =
                 case readFewBitsSafe 8 state_ of
                     ( s2, bits ) ->
                         if bits == 0 && i + 1 == sizeBytes && sizeBytes > 1 then
-                            Err "Exuberant byte"
+                            Err ExuberantByte
 
                         else
                             -- @optimize remove this record update
@@ -428,7 +444,7 @@ decodeMetaBlockBytes s_ =
     case readFewBits 1 s of
         ( s1, reserved ) ->
             if reserved /= 0 then
-                Err "Corrupted reserved bit"
+                Err CorruptedReservedBit
 
             else
                 case readFewBits 2 s1 of
@@ -448,7 +464,7 @@ decodeMetaBlockNibbles numberOfNibbles s =
                 case readFewBitsSafe 4 state_ of
                     ( s2, bits ) ->
                         if bits == 0 && i + 1 == sizeNibbles && sizeNibbles > 4 then
-                            Err "Exuberant nibble"
+                            Err ExuberantNibble
 
                         else
                             -- @optimize remove record update
@@ -760,7 +776,8 @@ readComplexHuffmanCode alphabetSizeLimit skip tableGroup tableIdx state =
         |> readComplexHuffmanCodeHelp skip codeLengthCodeLengths 32 0
         |> (\( s, ( space, numCodes, newCodelengthCodelengths ) ) ->
                 if space /= 0 && numCodes /= 1 then
-                    Err ("Corrupted Huffman code histogram: space =" ++ String.fromInt space ++ " (should be 0), and numCodes=" ++ String.fromInt numCodes ++ " (should be 1)!")
+                    -- Err ("Corrupted Huffman code histogram: space =" ++ String.fromInt space ++ " (should be 0), and numCodes=" ++ String.fromInt numCodes ++ " (should be 1)!")
+                    Err CorruptedHuffmanHistogram
 
                 else
                     case readHuffmanCodeLengths newCodelengthCodelengths alphabetSizeLimit codeLengths s of
@@ -857,7 +874,7 @@ readHuffmanCodeLengths codeLengthCodeLengths numSymbols initialCodeLengths state
                                             repeat3 - oldRepeat
                                     in
                                     if symbol + repeatDelta > numSymbols then
-                                        Err "symbol + repeatDelta > numSymbols"
+                                        Err (CustomError "symbol + repeatDelta > numSymbols")
 
                                     else
                                         let
@@ -912,7 +929,8 @@ readHuffmanCodeLengths codeLengthCodeLengths numSymbols initialCodeLengths state
 
         Ok ( s1, ( codeLengths, newSpace, newSymbol ) ) ->
             if newSpace /= 0 then
-                Err ("unused space! the space is " ++ String.fromInt newSpace ++ ", but the symbol is " ++ String.fromInt newSymbol)
+                -- Err ("unused space! the space is " ++ String.fromInt newSpace ++ ", but the symbol is " ++ String.fromInt newSymbol)
+                Err UnusedSpace
 
             else
                 Ok ( s1, Array.Helpers.fill 0 newSymbol numSymbols codeLengths )
@@ -929,7 +947,8 @@ readSimpleHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s0 =
                 case readFewBitsSafe maxBits s_ of
                     ( newS, symbol ) ->
                         if symbol >= alphabetSizeLimit then
-                            Err "can't readHuffmanCode"
+                            -- there is no huffman code for this symbol
+                            Err NoHuffmanCode
 
                         else
                             go (i + 1) numSymbols newS (Array.push symbol acc)
@@ -956,53 +975,52 @@ readSimpleHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s0 =
                 Err e ->
                     Err e
 
-                Ok ( s2, symbols0 ) ->
-                    case checkDupes symbols0 of
-                        Err e ->
-                            Err e
+                Ok ( s2, symbols ) ->
+                    if Array.Helpers.hasDuplicates symbols then
+                        Err (CustomError "the symbols contain duplicate elements")
 
-                        Ok symbols ->
-                            case readHistogramId numSymbols s2 of
-                                ( s3, histogramId ) ->
-                                    let
-                                        readSymbols index =
-                                            Array.get index symbols |> Maybe.withDefault 0
+                    else
+                        case readHistogramId numSymbols s2 of
+                            ( s3, histogramId ) ->
+                                let
+                                    readSymbols index =
+                                        Array.Helpers.unsafeGet index symbols
 
-                                        codeLengths =
-                                            case histogramId of
-                                                1 ->
-                                                    Array.repeat alphabetSizeLimit 0
-                                                        |> Array.set (readSymbols 0) 1
+                                    codeLengths =
+                                        case histogramId of
+                                            1 ->
+                                                Array.repeat alphabetSizeLimit 0
+                                                    |> Array.set (readSymbols 0) 1
 
-                                                2 ->
-                                                    Array.repeat alphabetSizeLimit 0
-                                                        |> Array.set (readSymbols 0) 1
-                                                        |> Array.set (readSymbols 1) 1
+                                            2 ->
+                                                Array.repeat alphabetSizeLimit 0
+                                                    |> Array.set (readSymbols 0) 1
+                                                    |> Array.set (readSymbols 1) 1
 
-                                                3 ->
-                                                    Array.repeat alphabetSizeLimit 0
-                                                        |> Array.set (readSymbols 0) 1
-                                                        |> Array.set (readSymbols 1) 2
-                                                        |> Array.set (readSymbols 2) 2
+                                            3 ->
+                                                Array.repeat alphabetSizeLimit 0
+                                                    |> Array.set (readSymbols 0) 1
+                                                    |> Array.set (readSymbols 1) 2
+                                                    |> Array.set (readSymbols 2) 2
 
-                                                4 ->
-                                                    Array.repeat alphabetSizeLimit 0
-                                                        |> Array.set (readSymbols 0) 2
-                                                        |> Array.set (readSymbols 1) 2
-                                                        |> Array.set (readSymbols 2) 2
-                                                        |> Array.set (readSymbols 3) 2
+                                            4 ->
+                                                Array.repeat alphabetSizeLimit 0
+                                                    |> Array.set (readSymbols 0) 2
+                                                    |> Array.set (readSymbols 1) 2
+                                                    |> Array.set (readSymbols 2) 2
+                                                    |> Array.set (readSymbols 3) 2
 
-                                                5 ->
-                                                    Array.repeat alphabetSizeLimit 0
-                                                        |> Array.set (readSymbols 0) 1
-                                                        |> Array.set (readSymbols 1) 2
-                                                        |> Array.set (readSymbols 2) 3
-                                                        |> Array.set (readSymbols 3) 3
+                                            5 ->
+                                                Array.repeat alphabetSizeLimit 0
+                                                    |> Array.set (readSymbols 0) 1
+                                                    |> Array.set (readSymbols 1) 2
+                                                    |> Array.set (readSymbols 2) 3
+                                                    |> Array.set (readSymbols 3) 3
 
-                                                _ ->
-                                                    Array.repeat alphabetSizeLimit 0
-                                    in
-                                    Ok ( s3, buildHuffmanTable tableGroup tableIdx 8 codeLengths )
+                                            _ ->
+                                                Array.repeat alphabetSizeLimit 0
+                                in
+                                Ok ( s3, buildHuffmanTable tableGroup tableIdx 8 codeLengths )
 
 
 {-| Returns reverse(reverse(key, len) + 1, len), where reverse(key, len) is the
@@ -1312,25 +1330,6 @@ finalize sorted rootBits ({ count, len, key, symbol, step, currentTableGroup, cu
         , key = getNextKey key len
         , count = Array.Helpers.update len (\x -> x - 1) count
     }
-
-
-checkDupes : Array Int -> Result String (Array Int)
-checkDupes symbols =
-    -- @optimize
-    let
-        go list =
-            case list of
-                [] ->
-                    Ok symbols
-
-                x :: xs ->
-                    if List.member x xs then
-                        Err "Duplicate simple huffman code symbol"
-
-                    else
-                        go xs
-    in
-    go (Array.toList symbols)
 
 
 readBlockLength : Array Int -> Int -> State -> ( State, Int )
@@ -1647,7 +1646,7 @@ decodeContextMap contextMapSize contextMap s0 =
                                             go2 i reps currentContextMap =
                                                 if reps /= 0 then
                                                     if i >= contextMapSize then
-                                                        Err "Corrupted context map"
+                                                        Err CorruptedCnotextMap
 
                                                     else
                                                         go2 (i + 1) (reps - 1) (Array.set i 0 currentContextMap)
@@ -1779,10 +1778,10 @@ calculateDistanceLut alphabetSizeLimit state =
 decompress : Written -> State -> Result Error ( Bytes, State, Written )
 decompress written unvalidated =
     if unvalidated.runningState == 0 then
-        Err "Can't decompreunvalidateds until initialized"
+        Err (CustomError "Can't decompreunvalidateds until initialized")
 
     else if unvalidated.runningState == 11 then
-        Err "Can't decompress after close"
+        Err (CustomError "Can't decompress after close")
 
     else
         let
@@ -1791,7 +1790,7 @@ decompress written unvalidated =
                     case decodeWindowBits unvalidated of
                         ( newS, windowBits ) ->
                             if windowBits == -1 then
-                                Err "Invalid 'windowBits' code"
+                                Err InvalidWindowBits
 
                             else
                                 Ok
@@ -1896,7 +1895,7 @@ decompressHelp context written s =
 
         2 ->
             if s.metaBlockLength < 0 then
-                Err "Invalid metablock length"
+                Err InvalidMetablockLength
 
             else
                 case readNextMetablockHeader s of
@@ -1990,7 +1989,7 @@ decompressHelp context written s =
 
         9 ->
             if s.distance > 0x7FFFFFFC then
-                Err "Invalid backward reference 1"
+                Err (InvalidBackwardReference ("distance is " ++ String.fromInt s.distance ++ ", but may not exceed " ++ String.fromInt 0x7FFFFFFC))
 
             else if s.copyLength >= 4 && s.copyLength <= 24 then
                 let
@@ -2030,10 +2029,10 @@ decompressHelp context written s =
                         decompressHelp context written (updateEvaluateState9 s.nextRunningState 4 newRingBuffer (s.pos + len) newMetaBlockLength s)
 
                 else
-                    Err "Invalid backward reference 2"
+                    Err (InvalidBackwardReference ("the transform index is " ++ String.fromInt transformIdx ++ ", but it must be smaller than 121"))
 
             else
-                Err ("Invalid backward reference 3: copyLength is " ++ String.fromInt s.copyLength)
+                Err (InvalidBackwardReference ("CopyLength must be 4 >= copyLength <= 24, but it is " ++ String.fromInt s.copyLength))
 
         6 ->
             copyUncompressedData s
@@ -2343,7 +2342,7 @@ copyBytesToRingBuffer : Int -> Int -> Array Int -> State -> Result Error ( State
 copyBytesToRingBuffer offset length data s =
     -- NOTE data is the ringbufffer
     if Bitwise.and s.bitOffset 7 /= 0 then
-        Err "unaligned copyBytes"
+        Err UnalignedCopyBytes
 
     else
         let
@@ -2408,7 +2407,7 @@ copyBytesToRingBuffer offset length data s =
 
                         Ok ( newState, len ) ->
                             if len == -1 then
-                                Err "unexpected end of input"
+                                Err (CustomError "Unexpected end of input")
 
                             else
                                 readFromInput newState (currentOffset + len) (currentLength - len) accum
@@ -2530,7 +2529,7 @@ remainder7 s =
                                                     Array.Helpers.unsafeGet index s3.rings + Array.Helpers.unsafeGet distanceCode Constants.distance_short_code_value_offset
                                             in
                                             if newDistance < 0 then
-                                                Err "negative distance"
+                                                Err (CustomError "negative distance")
 
                                             else
                                                 Ok
@@ -2601,7 +2600,7 @@ remainder7 s =
                             )
 
                     else if s5.copyLength > s.metaBlockLength then
-                        Err ("Invalid backward reference in remainder7 at position " ++ String.fromInt s5.pos)
+                        Err (CustomError ("Invalid backward reference in remainder7 at position " ++ String.fromInt s5.pos))
 
                     else if new.distanceCode > 0 then
                         let
@@ -2765,7 +2764,7 @@ jumpToByteBoundary s =
         case readFewBits padding s of
             ( s2, paddingBits ) ->
                 if paddingBits /= 0 then
-                    Err "Corrupted padding bits"
+                    Err CorruptedPaddingBits
 
                 else
                     Ok s2
@@ -2888,7 +2887,7 @@ doReadMoreInput s =
             Ok s
 
         else
-            Err "No more inupt"
+            Err (CustomError "No more inupt")
 
     else
         let
@@ -3003,7 +3002,7 @@ readInput offset length s =
             Ok ( { s | input = newInput, byteBuffer = newByteBuffer }, bytesRead )
 
         Nothing ->
-            Err "readInput: insufficient input"
+            Err (CustomError "readInput: insufficient input")
 
 
 decode : Bytes -> Result Error Bytes

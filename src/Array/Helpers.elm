@@ -1,8 +1,8 @@
-module Array.Helpers exposing (unsafeGet, setSlice, inverseMoveToFrontTransform, fill, update, moveToFront, copyWithin, decodeArray, replicateValue)
+module Array.Helpers exposing (unsafeGet, setSlice, inverseMoveToFrontTransform, fill, update, moveToFront, copyWithin, decodeArray, replicateValue, hasDuplicates)
 
 import Array exposing (Array)
 import Bitwise
-
+import Set
 import Bytes.Decode  as Decode exposing (Decoder)
 
 
@@ -23,6 +23,21 @@ replicateValue table offset step end item =
     else
         newTable
 
+hasDuplicates : Array comparable -> Bool
+hasDuplicates = Array.toList >> hasDuplicatesList 
+
+hasDuplicatesList : List comparable -> Bool
+hasDuplicatesList list = 
+    let go seen remaining = 
+            case remaining of 
+                [] -> False
+                x :: xs -> 
+                    if Set.member x seen then 
+                        False 
+                    else 
+                        go  (Set.insert x seen) xs
+    in
+        go Set.empty list
 
 decodeArray : Int -> Decoder a -> Decoder (Array a)
 decodeArray n decoder = 
