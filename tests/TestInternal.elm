@@ -9,7 +9,7 @@ import Fuzz exposing (Fuzzer, int, list, string)
 import Internal
 import Test exposing (..)
 import Transforms
-
+import Array.Helpers
 
 wholePipeline =
     let
@@ -141,7 +141,7 @@ bug3 =
                         Array.fromList
                             [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 ]
                 in
-                Internal.inverseMoveToFrontTransform input 128
+                Array.Helpers.inverseMoveToFrontTransform input 128
                     |> Expect.equal output
         , test "moveToFront" <|
             \_ ->
@@ -154,7 +154,7 @@ bug3 =
                             |> Array.set 0 1
                             |> Array.set 1 0
                 in
-                Internal.moveToFront 1 input
+                Array.Helpers.moveToFront 1 input
                     |> Expect.equal output
         ]
 
