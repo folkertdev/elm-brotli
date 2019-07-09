@@ -5,10 +5,16 @@ import Array.Helpers
 import Bitwise
 
 
+{-| Use pre-calculated transforms. The total size of the code is larger than the size of the decoded data
+-}
 rfc_transforms : Transforms
 rfc_transforms =
-    new 121 167 50
-        |> unpackTransforms rfcPrefixSuffixSrc rfcTransformsSrc
+    {-
+       new 121 167 50
+           |> unpackTransforms rfcPrefixSuffixSrc rfcTransformsSrc
+           |> Debug.log "rfc_transforms"
+    -}
+    rfc_transformsPrecalculated
 
 
 type alias Transforms =
@@ -363,18 +369,144 @@ unpackTransforms prefixSuffixSrc transformsSrc transforms =
     }
 
 
+rfcPrefixSuffixSrc : Array Int
+rfcPrefixSuffixSrc =
+    Array.fromList [ 35, 32, 35, 115, 32, 35, 44, 32, 35, 101, 32, 35, 46, 35, 32, 116, 104, 101, 32, 35, 46, 99, 111, 109, 47, 35, 194, 160, 35, 32, 111, 102, 32, 35, 32, 97, 110, 100, 32, 35, 32, 105, 110, 32, 35, 32, 116, 111, 32, 35, 34, 35, 34, 62, 35, 10, 35, 93, 35, 32, 102, 111, 114, 32, 35, 32, 97, 32, 35, 32, 116, 104, 97, 116, 32, 35, 46, 32, 35, 32, 119, 105, 116, 104, 32, 35, 39, 35, 32, 102, 114, 111, 109, 32, 35, 32, 98, 121, 32, 35, 46, 32, 84, 104, 101, 32, 35, 32, 111, 110, 32, 35, 32, 97, 115, 32, 35, 32, 105, 115, 32, 35, 105, 110, 103, 32, 35, 10, 9, 35, 58, 35, 101, 100, 32, 35, 40, 35, 32, 97, 116, 32, 35, 108, 121, 32, 35, 61, 34, 35, 32, 111, 102, 32, 116, 104, 101, 32, 35, 46, 32, 84, 104, 105, 115, 32, 35, 44, 35, 32, 110, 111, 116, 32, 35, 101, 114, 32, 35, 97, 108, 32, 35, 61, 39, 35, 102, 117, 108, 32, 35, 105, 118, 101, 32, 35, 108, 101, 115, 115, 32, 35, 101, 115, 116, 32, 35, 105, 122, 101, 32, 35, 111, 117, 115, 32, 35 ]
 
 
-rfcPrefixSuffixSrc : Array Int 
-rfcPrefixSuffixSrc = 
-    Array.fromList [35,32,35,115,32,35,44,32,35,101,32,35,46,35,32,116,104,101,32,35,46,99,111,109,47,35,194,160,35,32,111,102,32,35,32,97,110,100,32,35,32,105,110,32,35,32,116,111,32,35,34,35,34,62,35,10,35,93,35,32,102,111,114,32,35,32,97,32,35,32,116,104,97,116,32,35,46,32,35,32,119,105,116,104,32,35,39,35,32,102,114,111,109,32,35,32,98,121,32,35,46,32,84,104,101,32,35,32,111,110,32,35,32,97,115,32,35,32,105,115,32,35,105,110,103,32,35,10,9,35,58,35,101,100,32,35,40,35,32,97,116,32,35,108,121,32,35,61,34,35,32,111,102,32,116,104,101,32,35,46,32,84,104,105,115,32,35,44,35,32,110,111,116,32,35,101,114,32,35,97,108,32,35,61,39,35,102,117,108,32,35,105,118,101,32,35,108,101,115,115,32,35,101,115,116,32,35,105,122,101,32,35,111,117,115,32,35]
-
-
-
-rfcTransformsSrc : Array Int 
+rfcTransformsSrc : Array Int
 rfcTransformsSrc =
     Array.fromList
+        [ 32, 32, 32, 32, 32, 33, 33, 32, 33, 32, 44, 32, 32, 42, 33, 32, 32, 38, 33, 32, 32, 34, 32, 33, 32, 32, 41, 32, 42, 32, 32, 32, 42, 32, 45, 32, 32, 33, 32, 35, 32, 33, 32, 32, 35, 33, 42, 33, 32, 32, 43, 32, 32, 44, 36, 32, 33, 32, 32, 45, 32, 32, 37, 32, 32, 46, 32, 32, 47, 32, 35, 32, 32, 32, 48, 32, 32, 49, 32, 46, 32, 32, 34, 32, 32, 32, 50, 32, 32, 51, 33, 42, 32, 32, 32, 52, 37, 32, 32, 33, 32, 35, 32, 47, 32, 32, 32, 53, 32, 32, 54, 32, 32, 55, 32, 32, 56, 32, 48, 32, 32, 49, 32, 38, 32, 32, 32, 36, 32, 32, 32, 57, 32, 43, 32, 32, 32, 58, 32, 32, 59, 32, 32, 60, 32, 39, 32, 32, 33, 61, 32, 32, 62, 32, 32, 63, 33, 32, 52, 32, 32, 64, 32, 52, 32, 32, 50, 32, 32, 38, 32, 32, 32, 65, 32, 42, 35, 32, 40, 32, 32, 32, 66, 32, 32, 67, 38, 32, 41, 32, 37, 32, 32, 41, 32, 33, 42, 35, 32, 42, 45, 37, 32, 65, 32, 43, 33, 32, 42, 46, 32, 32, 68, 33, 32, 37, 39, 32, 32, 38, 32, 69, 32, 42, 54, 32, 32, 70, 32, 32, 71, 37, 32, 33, 32, 42, 65, 32, 42, 37, 32, 32, 72, 33, 32, 68, 32, 32, 73, 33, 43, 33, 32, 32, 74, 33, 43, 32, 32, 32, 75, 32, 43, 45, 32, 42, 52, 33, 32, 65, 32, 32, 76, 33, 42, 52, 32, 32, 77, 32, 32, 78, 32, 43, 54, 32, 32, 79, 33, 42, 37, 32, 43, 46, 33, 32, 75, 32, 42, 71, 32, 32, 80, 32, 43, 37, 40, 32, 32, 33, 32, 71, 32, 42, 68, 32, 43, 68, 32, 32, 81, 32, 43, 35, 32, 42, 75, 33, 42, 71, 33, 43, 68, 33, 43, 35, 32, 43, 71, 32, 43, 65, 32, 43, 52, 33, 43, 37, 32, 43, 75, 33, 43, 52, 33, 42, 68, 33, 43, 75, 33, 42, 75 ]
 
-    [32,32,32,32,32,33,33,32,33,32,44,32,32,42,33,32,32,38,33,32,32,34,32,33,32,32,41,32,42,32,32,32,42,32,45,32,32,33,32,35,32,33,32,32,35,33,42,33,32,32,43,32,32,44,36,32,33,32,32,45,32,32,37,32,32,46,32,32,47,32,35,32,32,32,48,32,32,49,32,46,32,32,34,32,32,32,50,32,32,51,33,42,32,32,32,52,37,32,32,33,32,35,32,47,32,32,32,53,32,32,54,32,32,55,32,32,56,32,48,32,32,49,32,38,32,32,32,36,32,32,32,57,32,43,32,32,32,58,32,32,59,32,32,60,32,39,32,32,33,61,32,32,62,32,32,63,33,32,52,32,32,64,32,52,32,32,50,32,32,38,32,32,32,65,32,42,35,32,40,32,32,32,66,32,32,67,38,32,41,32,37,32,32,41,32,33,42,35,32,42,45,37,32,65,32,43,33,32,42,46,32,32,68,33,32,37,39,32,32,38,32,69,32,42,54,32,32,70,32,32,71,37,32,33,32,42,65,32,42,37,32,32,72,33,32,68,32,32,73,33,43,33,32,32,74,33,43,32,32,32,75,32,43,45,32,42,52,33,32,65,32,32,76,33,42,52,32,32,77,32,32,78,32,43,54,32,32,79,33,42,37,32,43,46,33,32,75,32,42,71,32,32,80,32,43,37,40,32,32,33,32,71,32,42,68,32,43,68,32,32,81,32,43,35,32,42,75,33,42,71,33,43,68,33,43,35,32,43,71,32,43,65,32,43,52,33,43,37,32,43,75,33,43,52,33,42,68,33,43,75,33,42,75]
 
-
+rfc_transformsPrecalculated =
+    { numTransforms = 121
+    , params = Array.repeat 121 0
+    , prefixSuffixHeads = Array.fromList [ 0, 0, 1, 3, 5, 7, 8, 13, 18, 20, 24, 29, 33, 37, 38, 40, 41, 42, 47, 50, 56, 58, 64, 65, 71, 75, 81, 85, 89, 93, 97, 99, 100, 103, 104, 108, 111, 113, 121, 128, 129, 134, 137, 140, 142, 146, 150, 155, 159, 163, 167 ]
+    , prefixSuffixStorage = Array.fromList [ 32, 115, 32, 44, 32, 101, 32, 46, 32, 116, 104, 101, 32, 46, 99, 111, 109, 47, 194, 160, 32, 111, 102, 32, 32, 97, 110, 100, 32, 32, 105, 110, 32, 32, 116, 111, 32, 34, 34, 62, 10, 93, 32, 102, 111, 114, 32, 32, 97, 32, 32, 116, 104, 97, 116, 32, 46, 32, 32, 119, 105, 116, 104, 32, 39, 32, 102, 114, 111, 109, 32, 32, 98, 121, 32, 46, 32, 84, 104, 101, 32, 32, 111, 110, 32, 32, 97, 115, 32, 32, 105, 115, 32, 105, 110, 103, 32, 10, 9, 58, 101, 100, 32, 40, 32, 97, 116, 32, 108, 121, 32, 61, 34, 32, 111, 102, 32, 116, 104, 101, 32, 46, 32, 84, 104, 105, 115, 32, 44, 32, 110, 111, 116, 32, 101, 114, 32, 97, 108, 32, 61, 39, 102, 117, 108, 32, 105, 118, 101, 32, 108, 101, 115, 115, 32, 101, 115, 116, 32, 105, 122, 101, 32, 111, 117, 115, 32 ]
+    , triplets =
+        Array.fromList
+            [ { prefixIdx = 0, suffixIdx = 0, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 1, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 1, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 12 }
+            , { prefixIdx = 0, suffixIdx = 1, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 6, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 0, transformType = 0 }
+            , { prefixIdx = 2, suffixIdx = 1, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 9, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 10, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 13 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 1 }
+            , { prefixIdx = 3, suffixIdx = 1, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 3, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 1, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 11, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 12, transformType = 0 }
+            , { prefixIdx = 4, suffixIdx = 1, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 13, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 5, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 14, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 15, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 3 }
+            , { prefixIdx = 0, suffixIdx = 16, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 17, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 14 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 2 }
+            , { prefixIdx = 0, suffixIdx = 18, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 19, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 0, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 20, transformType = 0 }
+            , { prefixIdx = 5, suffixIdx = 0, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 3, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 15 }
+            , { prefixIdx = 0, suffixIdx = 21, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 22, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 23, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 24, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 16 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 17 }
+            , { prefixIdx = 6, suffixIdx = 0, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 4 }
+            , { prefixIdx = 0, suffixIdx = 25, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 26, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 27, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 28, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 7 }
+            , { prefixIdx = 0, suffixIdx = 29, transformType = 1 }
+            , { prefixIdx = 0, suffixIdx = 30, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 31, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 20, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 32, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 20 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 18 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 6 }
+            , { prefixIdx = 0, suffixIdx = 33, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 3, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 8 }
+            , { prefixIdx = 0, suffixIdx = 34, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 35, transformType = 0 }
+            , { prefixIdx = 6, suffixIdx = 9, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 5 }
+            , { prefixIdx = 0, suffixIdx = 0, transformType = 9 }
+            , { prefixIdx = 1, suffixIdx = 3, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 13, transformType = 10 }
+            , { prefixIdx = 5, suffixIdx = 33, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 1, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 14, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 36, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 5, transformType = 0 }
+            , { prefixIdx = 7, suffixIdx = 0, transformType = 0 }
+            , { prefixIdx = 6, suffixIdx = 37, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 22, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 38, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 39, transformType = 0 }
+            , { prefixIdx = 5, suffixIdx = 1, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 33, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 5, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 40, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 36, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 41, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 1, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 42, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 0, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 43, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 13, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 20, transformType = 10 }
+            , { prefixIdx = 1, suffixIdx = 33, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 44, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 20, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 45, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 46, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 22, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 47, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 5, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 14, transformType = 11 }
+            , { prefixIdx = 1, suffixIdx = 43, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 39, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 48, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 5, transformType = 11 }
+            , { prefixIdx = 8, suffixIdx = 0, transformType = 0 }
+            , { prefixIdx = 1, suffixIdx = 39, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 36, transformType = 10 }
+            , { prefixIdx = 0, suffixIdx = 36, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 49, transformType = 0 }
+            , { prefixIdx = 0, suffixIdx = 3, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 43, transformType = 10 }
+            , { prefixIdx = 1, suffixIdx = 39, transformType = 10 }
+            , { prefixIdx = 1, suffixIdx = 36, transformType = 11 }
+            , { prefixIdx = 1, suffixIdx = 3, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 39, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 33, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 20, transformType = 11 }
+            , { prefixIdx = 1, suffixIdx = 5, transformType = 11 }
+            , { prefixIdx = 0, suffixIdx = 43, transformType = 11 }
+            , { prefixIdx = 1, suffixIdx = 20, transformType = 11 }
+            , { prefixIdx = 1, suffixIdx = 36, transformType = 10 }
+            , { prefixIdx = 1, suffixIdx = 43, transformType = 11 }
+            , { prefixIdx = 1, suffixIdx = 43, transformType = 10 }
+            ]
+    }
