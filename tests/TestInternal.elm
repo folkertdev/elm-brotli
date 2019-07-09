@@ -10,7 +10,7 @@ import Internal
 import Test exposing (..)
 import Transforms
 import Array.Helpers
-
+import Constants
 wholePipeline =
     let
         stringFromInt32 buffer =
@@ -107,7 +107,7 @@ wholePipeline =
         -- , pipeline "generated" Generated.text Generated.bytes
         , test "lookup table is correctly decoded" <|
             \_ ->
-                Internal.lookup
+                Constants.lookup
                     |> Expect.equal lookup_table_expected
         ]
 
@@ -120,11 +120,11 @@ charCodeAt =
     describe "charCodeAt"
         [ test "at 0" <|
             \_ ->
-                Internal.charCodeAt 0 data
+                Constants.charCodeAt 0 data
                     |> Expect.equal (Just 97)
         , test "at 5" <|
             \_ ->
-                Internal.charCodeAt 5 data
+                Constants.charCodeAt 5 data
                     |> Expect.equal (Just 102)
         ]
 
@@ -170,7 +170,7 @@ bug2 =
                     result =
                         Array.fromList [ 116, 105, 109, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
                 in
-                Transforms.transformDictionaryWord ringBuffer 0 Internal.dictionary_data 0 4 Transforms.rfc_transforms 0
+                Transforms.transformDictionaryWord ringBuffer 0 Constants.dictionary_data 0 4 Transforms.rfc_transforms 0
                     |> Expect.equal ( result, 4 )
         , test "calculateDistanceAlphabetSize" <|
             \_ ->
@@ -355,7 +355,7 @@ bug2 =
                     |> Expect.equal 1
         , test "cmd_lookup" <|
             \_ ->
-                Array.get 522 Internal.cmd_lookup
+                Array.get 522 Constants.cmd_lookup
                     |> Expect.equal (Just 4)
         , test "offsets" <|
             \_ ->
@@ -366,7 +366,7 @@ bug2 =
                     copy =
                         Array.fromList [ 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 102, 134, 198, 326, 582, 1094, 2118 ]
                 in
-                Internal.calculateOffsets
+                Constants.calculateOffsets
                     |> Expect.equal ( insert, copy )
         , fuzz (Fuzz.list (Fuzz.intRange 0 255)) "encodeByteArray" <|
             \bytes ->
@@ -377,13 +377,13 @@ bug2 =
                     new =
                         Internal.encodeByteArray (Array.fromList bytes)
                             |> Encode.encode
-                            |> Decode.decode (Internal.array n Decode.unsignedInt8)
+                            |> Decode.decode (Array.Helpers.decodeArray n Decode.unsignedInt8)
 
                     old =
                         List.map Encode.unsignedInt8 bytes
                             |> Encode.sequence
                             |> Encode.encode
-                            |> Decode.decode (Internal.array n Decode.unsignedInt8)
+                            |> Decode.decode (Array.Helpers.decodeArray n Decode.unsignedInt8)
                 in
                 new
                     |> Expect.equal old

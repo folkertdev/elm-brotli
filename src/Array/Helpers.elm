@@ -1,7 +1,49 @@
-module Array.Helpers exposing (unsafeGet, setSlice, inverseMoveToFrontTransform, fill, update, moveToFront)
+module Array.Helpers exposing (unsafeGet, setSlice, inverseMoveToFrontTransform, fill, update, moveToFront, copyWithin, decodeArray)
 
 import Array exposing (Array)
 import Bitwise
+
+import Bytes.Decode  as Decode exposing (Decoder)
+import Bytes
+
+
+decodeArray : Int -> Decoder a -> Decoder (Array a)
+decodeArray n decoder = 
+    Decode.loop (n, Array.empty) (decodeArrayHelp decoder)
+
+decodeArrayHelp decoder (remaining, accum ) = 
+    if remaining > 0 then 
+        decoder |> Decode.map (\new -> Decode.Loop (remaining - 1, Array.push new accum ))
+    else 
+        Decode.succeed (Decode.Done accum ) 
+
+
+{-| TODO write tests
+<https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/copyWithin>
+-}
+copyWithin : Int -> Int -> Int -> Array a -> Array a
+copyWithin destination sourceStart sourceEnd arr =
+    {- If the source and target area don't overlap, we can slice it out and append it back in. That is faster.
+
+    -}
+    if destination >= sourceStart && destination < sourceEnd then
+        setSlice (Array.slice sourceStart sourceEnd arr) destination arr
+
+    else if sourceStart == sourceEnd then
+        arr
+
+    else
+        let
+            newArray =
+                case Array.get sourceStart arr of
+                    Nothing ->
+                        arr
+
+                    Just v ->
+                        Array.set destination v arr
+        in
+        copyWithin (destination + 1) (sourceStart + 1) sourceEnd newArray
+
 
 
 

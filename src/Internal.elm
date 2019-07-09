@@ -1,4 +1,4 @@
-module Internal exposing (array, buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, calculateOffsets, charCodeAt, cmd_lookup, decode, decompress, dictionary_data, encodeByteArray, generateCount, generateOffsets, lookup, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
+module Internal exposing (buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, encodeByteArray, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, replicateValue, sortSymbols, topUpAccumulator)
 
 import Array exposing (Array)
 import Array.Helpers
@@ -6,298 +6,12 @@ import Bitwise
 import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode as Decode exposing (Step(..))
 import Bytes.Encode as Encode
-import DictionaryData
+import Constants
 import Transforms
 
 
 log =
     \_ -> identity
-
-
-dictionary_offsets_by_length =
-    Array.fromList [ 0, 0, 0, 0, 0, 4096, 9216, 21504, 35840, 44032, 53248, 63488, 74752, 87040, 93696, 100864, 104704, 106752, 108928, 113536, 115968, 118528, 119872, 121280, 122016 ]
-
-
-dictionary_data =
-    unpackDictionaryData DictionaryData.data0 DictionaryData.data1
-
-
-dictionary_size_bits_by_length =
-    Array.fromList [ 0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5 ]
-
-
-distance_short_code_index_offset =
-    Array.fromList [ 0, 3, 2, 1, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3 ]
-
-
-distance_short_code_value_offset =
-    Array.fromList [ 0, 0, 0, 0, -1, 1, -2, 2, -3, 3, -1, 1, -2, 2, -3, 3 ]
-
-
-block_length_offset =
-    Array.fromList [ 1, 5, 9, 13, 17, 25, 33, 41, 49, 65, 81, 97, 113, 145, 177, 209, 241, 305, 369, 497, 753, 1265, 2289, 4337, 8433, 16625 ]
-
-
-block_length_n_bits =
-    Array.fromList [ 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 13, 24 ]
-
-
-max_huffman_table_size =
-    Array.fromList [ 256, 402, 436, 468, 500, 534, 566, 598, 630, 662, 694, 726, 758, 790, 822, 854, 886, 920, 952, 984, 1016, 1048, 1080 ]
-
-
-insert_length_n_bits =
-    Array.fromList [ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x02, 0x02, 0x03, 0x03, 0x04, 0x04, 0x05, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0C, 0x0E, 0x18 ]
-
-
-copy_length_n_bits =
-    Array.fromList [ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x02, 0x02, 0x03, 0x03, 0x04, 0x04, 0x05, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x18 ]
-
-
-lookup =
-    unpackLookupTable (Array.repeat 2048 0)
-
-
-toUsAsciiBytes : String -> Array Int
-toUsAsciiBytes str =
-    str
-        |> Encode.string
-        |> Encode.encode
-        |> (\buffer -> Decode.decode (array (Bytes.width buffer) Decode.unsignedInt8) buffer)
-        |> Maybe.withDefault Array.empty
-
-
-skipFlipAlt =
-    Array.fromList [ 1783, 37, 396, 39, 84, 37, 133, 39, 87, 37, 215, 37, 79, 37, 103, 37, 166, 38, 403, 37, 485, 38, 62, 38, 42, 38, 39, 38, 94, 38, 136, 376, 3134, 38, 429, 38, 402, 38, 41, 38, 94, 38, 37, 38, 39, 38, 130, 38, 80, 38, 49, 38, 177, 38, 51, 38, 93, 38, 109, 38, 117, 38, 69, 38, 116, 38, 67, 38, 207, 38, 86, 38, 86, 38, 47, 38, 62, 38, 54, 38, 3958, 6012, 111, 38, 112, 38, 64, 38, 69, 38, 77, 38, 80, 38, 120, 38, 64, 38, 70, 38, 101, 38, 204, 38, 55, 38, 58, 38, 40, 38, 68, 38, 48, 38, 67, 38, 41, 38, 46, 38, 70, 38, 45, 38, 49, 38, 40, 38, 76, 38, 70, 38, 49, 606, 42, 1002, 8691, 38, 4978, 38, 75, 38, 59, 38, 41, 38, 69, 38, 72, 38, 80, 38, 48, 38, 63, 38, 57, 38, 86, 38, 129, 38, 45, 38, 118, 38, 97, 38, 44, 38, 69, 38, 41, 38, 63, 38, 61, 38, 39, 38, 39, 38, 66, 38, 3374, 38, 1283, 38, 790, 42, 38, 42, 56, 38, 37, 38, 37, 38, 38, 38, 37, 44, 41, 38, 154, 38, 62, 38, 134, 38, 55, 38, 93, 38, 70, 38, 50, 38, 62, 38, 74, 38, 54, 38, 110, 38, 50, 38, 37, 38, 63, 38, 142, 38, 50, 38, 54, 38, 74, 38, 103, 38, 45, 38, 48, 38, 44, 38, 42, 38, 74, 38, 42, 38, 79, 38, 41, 38, 54, 38, 40, 38, 60, 38, 66, 38, 78, 38, 46, 38, 80, 38, 64, 38, 50, 38, 46, 38, 87, 38, 77, 38, 37, 1340, 132, 40, 44, 40, 60, 38, 44, 38, 986, 38, 6343, 38, 45, 38, 44, 40, 37, 38, 40, 38, 37, 38, 40, 315, 48, 38, 88, 38, 68, 38, 129, 38, 106, 38, 39, 38, 74, 38, 40, 38, 46, 38, 66, 38, 51, 38, 90, 38, 82, 38, 104, 38, 51, 38, 69, 38, 69, 38, 60, 198, 45, 864, 7923, 38, 37, 56, 63, 38, 64, 38, 44, 38, 90, 38, 64, 38, 48, 38, 74, 38, 44, 38, 94, 38, 120, 38, 95, 38, 54, 38, 67, 38, 54, 38, 67, 1836, 10789, 38, 102, 38, 45, 38, 45, 38, 45, 38, 45, 38, 44, 38, 74, 38, 50, 38, 56, 38, 122, 38, 56, 38, 67, 38, 89, 38, 56, 38, 45, 38, 100, 38, 7800, 204, 45, 38, 55, 38, 49, 38, 70, 38, 55, 38, 116, 38, 87, 38, 55, 38, 73, 38, 46, 38, 46, 38, 94, 38, 61, 3996, 6611, 38, 56, 40, 62, 38, 47, 38, 47, 38, 1915, 39, 41, 39, 4197, 39, 41, 39, 37, 64, 47, 38, 48, 38, 37, 1086, 2496, 42, 38, 42, 64, 38, 67, 1341, 1492, 628, 1515, 52, 3543, 1818, 1233, 54, 3460, 38, 47, 376, 771, 90, 38, 42, 37, 582, 1023, 38, 308, 38, 49, 168, 1204, 372 ]
-
-
-unpackDictionaryData data0 data1 =
-    let
-        dict =
-            toUsAsciiBytes (data0 ++ data1)
-
-        n =
-            -- String.length skipFlip
-            Array.length skipFlipAlt
-
-        go i offset accum =
-            if i < n then
-                let
-                    skip =
-                        (Array.get i skipFlipAlt |> Maybe.withDefault 0) - 36
-
-                    flip =
-                        Maybe.withDefault 0 (Array.get (i + 1) skipFlipAlt) - 36
-
-                    ( newOffset, newAccum ) =
-                        innerLoop 0 flip (offset + skip) accum
-                in
-                go (i + 2) newOffset newAccum
-
-            else
-                accum
-
-        innerLoop j flip offset accum =
-            if j < flip then
-                innerLoop (j + 1) flip (offset + 1) (Array.Helpers.update offset (\v -> Bitwise.or v 0x80) accum)
-
-            else
-                ( offset, accum )
-    in
-    go 0 0 dict
-
-
-unpackLookupTable =
-    let
-        characterMap =
-            "         !!  !                  \"#$##%#$&'##(#)#++++++++++((&*'##,---,---,-----,-----,-----&#'###.///.///./////./////./////&#'# "
-
-        rle =
-            "A/*  ':  & : $  \u{0081} @"
-
-        loop1 i arr =
-            if i < 256 then
-                loop1 (i + 1)
-                    (arr
-                        |> Array.set i (Bitwise.and i 0x3F)
-                        |> Array.set (512 + i) (Bitwise.shiftRightBy 2 i)
-                        |> Array.set (1792 + i) (2 + Bitwise.shiftRightBy 6 i)
-                    )
-
-            else
-                arr
-
-        loop2 i arr =
-            if i < 128 then
-                case charCodeAt i characterMap of
-                    Nothing ->
-                        arr
-
-                    Just value ->
-                        loop2 (i + 1) (Array.set (i + 1024) (4 * (value - 32)) arr)
-
-            else
-                arr
-
-        loop3 i arr =
-            if i < 64 then
-                loop3 (i + 1)
-                    (arr
-                        |> Array.set (1152 + i) (Bitwise.and i 1)
-                        |> Array.set (1216 + i) (Bitwise.and i 1 + 2)
-                    )
-
-            else
-                arr
-
-        loop4 k offset arr =
-            if k < 19 then
-                let
-                    value =
-                        Bitwise.and k 3
-
-                    rep =
-                        (charCodeAt k rle |> Maybe.withDefault 0) - 32
-
-                    go i currentOffset currentLookup =
-                        if i < rep then
-                            go (i + 1) (currentOffset + 1) (Array.set currentOffset value currentLookup)
-
-                        else
-                            ( currentOffset, currentLookup )
-
-                    ( newOffset, newLookup ) =
-                        go 0 offset arr
-                in
-                loop4 (k + 1) newOffset newLookup
-
-            else
-                arr
-
-        loop5 i arr =
-            if i < 16 then
-                loop5 (i + 1)
-                    (arr
-                        |> Array.set (1792 + i) 1
-                        |> Array.set (2032 + i) 6
-                    )
-
-            else
-                arr
-
-        loop6 i arr =
-            if i < 256 then
-                let
-                    value =
-                        Bitwise.shiftLeftBy 3 (Array.Helpers.unsafeGet (1792 + i) arr)
-                in
-                loop6 (i + 1) (Array.set (1536 + i) value arr)
-
-            else
-                arr
-    in
-    loop1 0
-        >> loop2 0
-        >> loop3 0
-        >> loop4 0 1280
-        >> loop5 0
-        >> (\arr ->
-                arr
-                    |> Array.set 1792 0
-                    |> Array.set 2047 7
-           )
-        >> loop6 0
-
-
-charCodeAt : Int -> String -> Maybe Int
-charCodeAt n str =
-    case String.uncons (String.dropLeft n str) of
-        Nothing ->
-            Nothing
-
-        Just ( c, _ ) ->
-            Just (Char.toCode c)
-
-
-cmd_lookup =
-    -- new Int16Array(2816);
-    unpackCommandLookupTable (Array.repeat 2816 0)
-
-
-calculateOffsets =
-    let
-        initialInsertLengthOffsets =
-            Array.repeat 24 0
-
-        initialCopyLengthOffsets =
-            Array.repeat 24 0
-                |> Array.set 0 2
-
-        go i insert copy =
-            if i < 23 then
-                go
-                    (i + 1)
-                    (Array.set (i + 1) (Array.Helpers.unsafeGet i insert + Bitwise.shiftLeftBy (Array.Helpers.unsafeGet i insert_length_n_bits) 1) insert)
-                    (Array.set (i + 1) (Array.Helpers.unsafeGet i copy + Bitwise.shiftLeftBy (Array.Helpers.unsafeGet i copy_length_n_bits) 1) copy)
-
-            else
-                ( insert, copy )
-    in
-    go 0 initialInsertLengthOffsets initialCopyLengthOffsets
-
-
-unpackCommandLookupTable arr =
-    let
-        ( insertLengthOffsets, copyLengthOffsets ) =
-            calculateOffsets
-
-        loop cmdCode cmdLookup =
-            if cmdCode < 704 then
-                let
-                    ( rangeIdx, distanceContextOffset ) =
-                        if Bitwise.shiftRightZfBy 6 cmdCode >= 2 then
-                            ( Bitwise.shiftRightZfBy 6 cmdCode - 2
-                            , 0
-                            )
-
-                        else
-                            ( Bitwise.shiftRightZfBy 6 cmdCode, -4 )
-
-                    insertCode =
-                        Bitwise.or
-                            (Bitwise.shiftLeftBy 3 (Bitwise.and (Bitwise.shiftRightZfBy (rangeIdx * 2) 0x00029850) 0x03))
-                            (Bitwise.and (Bitwise.shiftRightZfBy 3 cmdCode) 7)
-
-                    copyCode =
-                        Bitwise.or (Bitwise.shiftLeftBy 3 (Bitwise.and (Bitwise.shiftRightZfBy (rangeIdx * 2) 0x00026244) 0x03)) (Bitwise.and cmdCode 7)
-
-                    copyLengthOffset =
-                        Array.Helpers.unsafeGet copyCode copyLengthOffsets
-
-                    distanceContext =
-                        distanceContextOffset
-                            + (if copyLengthOffset > 4 then
-                                3
-
-                               else
-                                copyLengthOffset - 2
-                              )
-
-                    index =
-                        cmdCode * 4
-                in
-                loop (cmdCode + 1)
-                    (cmdLookup
-                        |> Array.set (index + 0) (Bitwise.or (Array.Helpers.unsafeGet insertCode insert_length_n_bits) (Bitwise.shiftLeftBy 8 (Array.Helpers.unsafeGet copyCode copy_length_n_bits)))
-                        |> Array.set (index + 1) (Array.Helpers.unsafeGet insertCode insertLengthOffsets)
-                        |> Array.set (index + 2) (Array.Helpers.unsafeGet copyCode copyLengthOffsets)
-                        |> Array.set (index + 3) distanceContext
-                    )
-
-            else
-                cmdLookup
-    in
-    loop 0 arr
 
 
 type alias Error =
@@ -997,16 +711,6 @@ readHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s_ =
                     readComplexHuffmanCode alphabetSizeLimit skip tableGroup tableIdx s2
 
 
-code_length_code_order : Array Int
-code_length_code_order =
-    Array.fromList [ 1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15 ]
-
-
-fixed_table : Array Int
-fixed_table =
-    Array.fromList [ 0x00020000, 0x00020004, 0x00020003, 0x00030002, 0x00020000, 0x00020004, 0x00020003, 0x00040001, 0x00020000, 0x00020004, 0x00020003, 0x00030002, 0x00020000, 0x00020004, 0x00020003, 0x00040005 ]
-
-
 readComplexHuffmanCodeHelp :
     Int
     -> Array Int
@@ -1018,7 +722,7 @@ readComplexHuffmanCodeHelp i codeLengthCodeLengths space numCodes s =
     if i < 18 && space > 0 then
         let
             codeLenIdx =
-                Array.Helpers.unsafeGet i code_length_code_order
+                Array.Helpers.unsafeGet i Constants.code_length_code_order
 
             s1 =
                 topUpAccumulator s
@@ -1028,10 +732,10 @@ readComplexHuffmanCodeHelp i codeLengthCodeLengths space numCodes s =
                     |> Bitwise.and 15
 
             s2 =
-                updateBitOffset (s1.bitOffset + Bitwise.shiftRightBy 16 (Array.Helpers.unsafeGet p fixed_table)) s1
+                updateBitOffset (s1.bitOffset + Bitwise.shiftRightBy 16 (Array.Helpers.unsafeGet p Constants.fixed_table)) s1
 
             v =
-                Array.Helpers.unsafeGet p fixed_table
+                Array.Helpers.unsafeGet p Constants.fixed_table
                     |> Bitwise.and 0xFFFF
         in
         if v /= 0 then
@@ -1324,11 +1028,6 @@ getNextKey key len =
     Bitwise.and key (finalStep - 1) + finalStep
 
 
-max_length : Int
-max_length =
-    15
-
-
 generateCount : Array Int -> Int -> Array Int
 generateCount codeLengths codeLengthsSize =
     let
@@ -1352,7 +1051,7 @@ generateOffsets : Array Int -> Array Int
 generateOffsets count =
     let
         go len offset =
-            if len < max_length then
+            if len < Constants.max_length then
                 let
                     newValue =
                         Array.Helpers.unsafeGet len offset + Array.Helpers.unsafeGet len count
@@ -1640,7 +1339,7 @@ readBlockLength tableGroup tableIdx s0 =
         ( s2, code ) ->
             let
                 n =
-                    Array.Helpers.unsafeGet code block_length_n_bits
+                    Array.Helpers.unsafeGet code Constants.block_length_n_bits
             in
             case
                 if n <= 16 then
@@ -1650,7 +1349,7 @@ readBlockLength tableGroup tableIdx s0 =
                     readManyBits n (topUpAccumulator s2)
             of
                 ( s4, result ) ->
-                    ( s4, Array.Helpers.unsafeGet code block_length_offset + result )
+                    ( s4, Array.Helpers.unsafeGet code Constants.block_length_offset + result )
 
 
 map2 : (a -> b -> c) -> (State -> Result Error ( State, a )) -> (State -> Result Error ( State, b )) -> (State -> Result Error ( State, c ))
@@ -1929,7 +1628,7 @@ decodeContextMap contextMapSize contextMap s0 =
                                         numTrees + maxRunLengthPrefix
 
                                     tableSize =
-                                        Array.get (Bitwise.shiftRightBy 5 (alphabetSize + 31)) max_huffman_table_size
+                                        Array.get (Bitwise.shiftRightBy 5 (alphabetSize + 31)) Constants.max_huffman_table_size
                                             |> Maybe.withDefault 0
 
                                     tableIdx =
@@ -1994,7 +1693,7 @@ decodeHuffmanTreeGroup : Int -> Int -> Int -> State -> Result Error ( State, Arr
 decodeHuffmanTreeGroup alphabetSizeMax alphabetSizeLimit n =
     let
         maxTableSize =
-            Array.get (Bitwise.shiftRightBy 5 (alphabetSizeLimit + 31)) max_huffman_table_size
+            Array.get (Bitwise.shiftRightBy 5 (alphabetSizeLimit + 31)) Constants.max_huffman_table_size
                 |> Maybe.withDefault 0
 
         initialGroup =
@@ -2291,13 +1990,13 @@ decompressHelp context written s =
             else if s.copyLength >= 4 && s.copyLength <= 24 then
                 let
                     offset =
-                        Array.Helpers.unsafeGet s.copyLength dictionary_offsets_by_length + wordIdx * s.copyLength
+                        Array.Helpers.unsafeGet s.copyLength Constants.dictionary_offsets_by_length + wordIdx * s.copyLength
 
                     wordId =
                         s.distance - s.maxDistance - 1
 
                     shift =
-                        Array.Helpers.unsafeGet s.copyLength dictionary_size_bits_by_length
+                        Array.Helpers.unsafeGet s.copyLength Constants.dictionary_size_bits_by_length
 
                     mask =
                         Bitwise.shiftLeftBy shift 1 - 1
@@ -2311,7 +2010,7 @@ decompressHelp context written s =
                 if transformIdx < 121 then
                     let
                         ( newRingBuffer, len ) =
-                            Transforms.transformDictionaryWord s.ringBuffer s.pos dictionary_data offset s.copyLength Transforms.rfc_transforms transformIdx
+                            Transforms.transformDictionaryWord s.ringBuffer s.pos Constants.dictionary_data offset s.copyLength Transforms.rfc_transforms transformIdx
 
                         newMetaBlockLength =
                             s.metaBlockLength - len
@@ -2364,7 +2063,7 @@ decompressHelp context written s =
                 if s.pos >= s.ringBufferSize then
                     let
                         newRingBuffer =
-                            copyWithin 0 s.ringBufferSize s.pos s.ringBuffer
+                            Array.Helpers.copyWithin 0 s.ringBufferSize s.pos s.ringBuffer
                     in
                     decompressHelp context
                         { fromRingBuffer = 0, toOutput = newWritten.toOutput, output = newWritten.output }
@@ -2415,13 +2114,13 @@ evaluateState4 context s =
                                         Bitwise.shiftLeftBy 2 v
 
                                     insertAndCopyExtraBits =
-                                        Array.Helpers.unsafeGet (cmdCode + 0) cmd_lookup
+                                        Array.Helpers.unsafeGet (cmdCode + 0) Constants.cmd_lookup
 
                                     insertLengthOffset =
-                                        Array.Helpers.unsafeGet (cmdCode + 1) cmd_lookup
+                                        Array.Helpers.unsafeGet (cmdCode + 1) Constants.cmd_lookup
 
                                     copyLengthOffset =
-                                        Array.Helpers.unsafeGet (cmdCode + 2) cmd_lookup
+                                        Array.Helpers.unsafeGet (cmdCode + 2) Constants.cmd_lookup
 
                                     readInsertLength state =
                                         let
@@ -2440,7 +2139,7 @@ evaluateState4 context s =
                                 in
                                 case s3 |> topUpAccumulator |> readInsertLength |> readCopyLength of
                                     ( s5, ( insertLengthBits, copyLengthBits ) ) ->
-                                        Ok (updateEvaluateState4 0 7 (copyLengthBits + copyLengthOffset) (insertLengthBits + insertLengthOffset) (Array.Helpers.unsafeGet (cmdCode + 3) cmd_lookup) (s3.commandBlockLength - 1) s5)
+                                        Ok (updateEvaluateState4 0 7 (copyLengthBits + copyLengthOffset) (insertLengthBits + insertLengthOffset) (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup) (s3.commandBlockLength - 1) s5)
 
 
 evaluateState7 : Context -> Int -> Int -> State -> Result Error State
@@ -2468,10 +2167,10 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                         s1.contextLookupOffset2 + prevByte2
 
                     v1 =
-                        Array.Helpers.unsafeGet i1 lookup
+                        Array.Helpers.unsafeGet i1 Constants.lookup
 
                     v2 =
-                        Array.Helpers.unsafeGet i2 lookup
+                        Array.Helpers.unsafeGet i2 Constants.lookup
 
                     literalContext =
                         Bitwise.or v1 v2
@@ -2558,7 +2257,7 @@ evaluateState8 context s =
                     go 0 dst src s.ringBuffer
 
                 else
-                    copyWithin dst src srcEnd s.ringBuffer
+                    Array.Helpers.copyWithin dst src srcEnd s.ringBuffer
         in
         updateEvaluateState8
             newRingBuffer
@@ -2738,10 +2437,10 @@ writeRingBuffer : Int -> Written -> State -> ( Bool, Written )
 writeRingBuffer ringBufferBytesReady written s =
     let
         toWrite =
-            min (outputLength - written.toOutput) (ringBufferBytesReady - written.fromRingBuffer)
+            min (Constants.outputLength - written.toOutput) (ringBufferBytesReady - written.fromRingBuffer)
 
         wasThereWritten state =
-            if written.toOutput < outputLength then
+            if written.toOutput < Constants.outputLength then
                 1
 
             else
@@ -2765,7 +2464,7 @@ writeRingBuffer ringBufferBytesReady written s =
             else
                 written
     in
-    ( newerWritten.toOutput < outputLength, newerWritten )
+    ( newerWritten.toOutput < Constants.outputLength, newerWritten )
 
 
 remainder7 : Context -> State -> Result Error State
@@ -2835,10 +2534,10 @@ remainder7 context s =
                                         if distanceCode < 16 then
                                             let
                                                 index =
-                                                    Bitwise.and (s3.distRbIdx + Array.Helpers.unsafeGet distanceCode distance_short_code_index_offset) 0x03
+                                                    Bitwise.and (s3.distRbIdx + Array.Helpers.unsafeGet distanceCode Constants.distance_short_code_index_offset) 0x03
 
                                                 newDistance =
-                                                    Array.Helpers.unsafeGet index s3.rings + Array.Helpers.unsafeGet distanceCode distance_short_code_value_offset
+                                                    Array.Helpers.unsafeGet index s3.rings + Array.Helpers.unsafeGet distanceCode Constants.distance_short_code_value_offset
                                             in
                                             if newDistance < 0 then
                                                 Err "negative distance"
@@ -2979,7 +2678,6 @@ decodeDistanceBlockSwitch s0 =
     case decodeBlockTypeAndLength 2 s0.numDistanceBlockTypes s0 of
         ( s1, newRings, v ) ->
             { s1
-              -- add  -1 to distanceBlockLength here to prevent extra record update
                 | distanceBlockLength = v
                 , distContextMapSlice = Bitwise.shiftLeftBy 2 (Array.Helpers.unsafeGet 9 newRings)
                 , rings = newRings
@@ -3045,7 +2743,7 @@ calculateFence written s =
 
         value =
             if s.isEager then
-                min result (written.fromRingBuffer + outputLength - written.toOutput)
+                min result (written.fromRingBuffer + Constants.outputLength - written.toOutput)
 
             else
                 result
@@ -3209,7 +2907,8 @@ doReadMoreInput s =
             bytesInBuffer =
                 4096 - readOffset
         in
-        case doReadMoreInputHelp bytesInBuffer { s | byteBuffer = copyWithin 0 readOffset 4096 s.byteBuffer, halfOffset = 0 } of
+        -- @optimize replace record update?
+        case doReadMoreInputHelp bytesInBuffer { s | byteBuffer = Array.Helpers.copyWithin 0 readOffset 4096 s.byteBuffer, halfOffset = 0 } of
             Err e ->
                 Err e
 
@@ -3240,33 +2939,6 @@ doReadMoreInputHelp bytesInBuffer s =
 
     else
         Ok ( s, bytesInBuffer )
-
-
-{-| TODO write tests
-<https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/copyWithin>
--}
-copyWithin : Int -> Int -> Int -> Array a -> Array a
-copyWithin destination sourceStart sourceEnd arr =
-    {- If the source and target area don't overlap, we can slice it out and append it back in. That is faster.
-
-    -}
-    if destination >= sourceStart && destination < sourceEnd then
-        Array.Helpers.setSlice (Array.slice sourceStart sourceEnd arr) destination arr
-
-    else if sourceStart == sourceEnd then
-        arr
-
-    else
-        let
-            newArray =
-                case Array.get sourceStart arr of
-                    Nothing ->
-                        arr
-
-                    Just v ->
-                        Array.set destination v arr
-        in
-        copyWithin (destination + 1) (sourceStart + 1) sourceEnd newArray
 
 
 overflow8 v =
@@ -3330,7 +3002,7 @@ readInput offset length s =
             end - s.input.offset
 
         decoder =
-            Decode.map2 (\_ v -> v) (Decode.bytes s.input.offset) (array bytesRead Decode.signedInt8)
+            Decode.map2 (\_ v -> v) (Decode.bytes s.input.offset) (Array.Helpers.decodeArray bytesRead Decode.signedInt8)
     in
     case Decode.decode decoder s.input.buffer of
         Just newSegment ->
@@ -3365,7 +3037,7 @@ readInputToArray offset length data s =
             end - s.input.offset
 
         decoder =
-            Decode.map2 (\_ v -> v) (Decode.bytes offset) (array bytesRead Decode.unsignedInt8)
+            Decode.map2 (\_ v -> v) (Decode.bytes offset) (Array.Helpers.decodeArray bytesRead Decode.unsignedInt8)
     in
     case Decode.decode decoder s.input.buffer of
         Just newSegment ->
@@ -3380,24 +3052,6 @@ readInputToArray offset length data s =
 
         Nothing ->
             Err "readInput: insufficient input"
-
-
-array : Int -> Decode.Decoder a -> Decode.Decoder (Array a)
-array tableCount decoder =
-    let
-        helper ( n, xs ) =
-            if n <= 0 then
-                Decode.succeed (Done xs)
-
-            else
-                Decode.map (\x -> Loop ( n - 1, Array.push x xs )) decoder
-    in
-    Decode.loop ( tableCount, Array.empty ) helper
-
-
-outputLength : Int
-outputLength =
-    16384
 
 
 decode : Bytes -> Result Error Bytes
