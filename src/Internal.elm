@@ -68,7 +68,10 @@ type alias State =
     , insertLength : Int
     , contextMapSlice : Int
     , distContextMapSlice : Int
-    , contextLookup : { offset1 : Int, offset2 : Int }
+    , contextLookup :
+        { offset1 : Int
+        , offset2 : Int
+        }
     , distanceCode : Int
     , numDirectDistanceCodes : Int
     , distancePostfixMask : Int
@@ -716,6 +719,15 @@ readMetablockPartition treeType numBlockTypes s =
 readSymbol : Array Int -> Int -> State -> ( State, Int )
 readSymbol tableGroup tableIdx s =
     let
+        ( newBitOffset, sym ) =
+            readSymbolPure tableGroup tableIdx s
+    in
+    ( updateBitOffset newBitOffset s, sym )
+
+
+readSymbolPure : Array Int -> Int -> State -> ( Int, Int )
+readSymbolPure tableGroup tableIdx s =
+    let
         readTableGroup index =
             Array.Helpers.unsafeGet index tableGroup
 
@@ -732,7 +744,7 @@ readSymbol tableGroup tableIdx s =
             Bitwise.and (readTableGroup offset) 0xFFFF
     in
     if bits <= 8 then
-        ( updateBitOffset (s.bitOffset + bits) s, sym )
+        ( s.bitOffset + bits, sym )
 
     else
         let
@@ -751,7 +763,7 @@ readSymbol tableGroup tableIdx s =
             result =
                 Bitwise.and (readTableGroup offset3) 0xFFFF
         in
-        ( updateBitOffset newBitOffset s, result )
+        ( newBitOffset, result )
 
 
 readHuffmanCode : Int -> Int -> Array Int -> Int -> State -> Result Error ( State, { tableGroup : Array Int, total_size : Int } )
@@ -1390,16 +1402,15 @@ readBlockLength tableGroup tableIdx s0 =
             let
                 n =
                     Array.Helpers.unsafeGet code Constants.block_length_n_bits
-            in
-            case
-                if n <= 16 then
-                    readFewBitsSafe n s2
 
-                else
-                    readManyBits n (topUpAccumulator s2)
-            of
-                ( s4, result ) ->
-                    ( s4, Array.Helpers.unsafeGet code Constants.block_length_offset + result )
+                ( s4, result ) =
+                    if n <= 16 then
+                        readFewBitsSafe n s2
+
+                    else
+                        readManyBits n (topUpAccumulator s2)
+            in
+            ( s4, Array.Helpers.unsafeGet code Constants.block_length_offset + result )
 
 
 map2 : (a -> b -> c) -> (State -> Result Error ( State, a )) -> (State -> Result Error ( State, b )) -> (State -> Result Error ( State, c ))
@@ -1417,6 +1428,8 @@ map2 f d1 d2 s =
                     Ok ( s2, f x1 x2 )
 
 
+{-| @performance there are some record updates here, but only gets called once at the start
+-}
 readBlocks : State -> Result Error State
 readBlocks s0 =
     let
@@ -1649,7 +1662,7 @@ decodeContextMap : Int -> Array Int -> State -> Result Error ( State, Array Int,
 decodeContextMap contextMapSize contextMap s0 =
     let
         readMaxRunLengthPrefix =
-            readFewBits 1
+            readFewBitsSafe 1
                 >> (\( s, useRleForZeros ) ->
                         if useRleForZeros /= 0 then
                             case readFewBits 4 s of
@@ -1665,82 +1678,82 @@ decodeContextMap contextMapSize contextMap s0 =
             Err e
 
         Ok s1 ->
-            case decodeVarLenUnsignedByte s1 of
-                ( s2, v ) ->
-                    let
-                        numTrees =
-                            v + 1
-                    in
-                    if numTrees == 1 then
-                        Ok ( s2, Array.repeat contextMapSize 0, numTrees )
+            let
+                ( s2, v ) =
+                    decodeVarLenUnsignedByte s1
 
-                    else
-                        case readMaxRunLengthPrefix (topUpAccumulator s2) of
-                            ( s3, maxRunLengthPrefix ) ->
+                numTrees =
+                    v + 1
+            in
+            if numTrees == 1 then
+                Ok ( s2, Array.repeat contextMapSize 0, numTrees )
+
+            else
+                case readMaxRunLengthPrefix s2 of
+                    ( s3, maxRunLengthPrefix ) ->
+                        let
+                            alphabetSize =
+                                numTrees + maxRunLengthPrefix
+
+                            tableSize =
+                                Array.Helpers.unsafeGet (Bitwise.shiftRightBy 5 (alphabetSize + 31)) Constants.max_huffman_table_size
+
+                            tableIdx =
+                                (tableSize + 1) - 1
+                        in
+                        case readHuffmanCode alphabetSize alphabetSize (Array.repeat (tableSize + 1) 0) tableIdx s3 of
+                            Err e ->
+                                Err e
+
+                            Ok ( s4, table ) ->
                                 let
-                                    alphabetSize =
-                                        numTrees + maxRunLengthPrefix
+                                    go2 i reps currentContextMap =
+                                        if reps /= 0 then
+                                            if i >= contextMapSize then
+                                                Err CorruptedContextMap
 
-                                    tableSize =
-                                        Array.get (Bitwise.shiftRightBy 5 (alphabetSize + 31)) Constants.max_huffman_table_size
-                                            |> Maybe.withDefault 0
+                                            else
+                                                go2 (i + 1) (reps - 1) (Array.set i 0 currentContextMap)
 
-                                    tableIdx =
-                                        (tableSize + 1) - 1
-                                in
-                                case readHuffmanCode alphabetSize alphabetSize (Array.repeat (tableSize + 1) 0) tableIdx s3 of
-                                    Err e ->
-                                        Err e
+                                        else
+                                            Ok ( i, currentContextMap )
 
-                                    Ok ( s4, table ) ->
-                                        let
-                                            go2 i reps currentContextMap =
-                                                if reps /= 0 then
-                                                    if i >= contextMapSize then
-                                                        Err CorruptedContextMap
+                                    go i currentContextMap s =
+                                        if i < contextMapSize then
+                                            case maybeReadMoreInput 2030 s |> Result.map (topUpAccumulator >> readSymbol table.tableGroup tableIdx) of
+                                                Err e ->
+                                                    Err e
+
+                                                Ok ( s5, code ) ->
+                                                    if code == 0 then
+                                                        go (i + 1) (Array.set i 0 currentContextMap) s5
+
+                                                    else if code <= maxRunLengthPrefix then
+                                                        case readFewBitsSafe code s5 of
+                                                            ( s6, reps_ ) ->
+                                                                let
+                                                                    reps =
+                                                                        Bitwise.shiftLeftBy code 1 + reps_
+                                                                in
+                                                                case go2 i reps currentContextMap of
+                                                                    Err e ->
+                                                                        Err e
+
+                                                                    Ok ( newI, newContextMap ) ->
+                                                                        go newI newContextMap s6
 
                                                     else
-                                                        go2 (i + 1) (reps - 1) (Array.set i 0 currentContextMap)
+                                                        go (i + 1) (Array.set i (code - maxRunLengthPrefix) currentContextMap) s5
 
-                                                else
-                                                    Ok ( i, currentContextMap )
+                                        else
+                                            case readFewBitsSafe 1 s of
+                                                ( newState, 1 ) ->
+                                                    Ok ( newState, Array.Helpers.inverseMoveToFrontTransform currentContextMap contextMapSize, numTrees )
 
-                                            go i currentContextMap s =
-                                                if i < contextMapSize then
-                                                    case maybeReadMoreInput 2030 s |> Result.map (topUpAccumulator >> readSymbol table.tableGroup tableIdx) of
-                                                        Err e ->
-                                                            Err e
-
-                                                        Ok ( s5, code ) ->
-                                                            if code == 0 then
-                                                                go (i + 1) (Array.set i 0 currentContextMap) s5
-
-                                                            else if code <= maxRunLengthPrefix then
-                                                                case readFewBitsSafe code s5 of
-                                                                    ( s6, reps_ ) ->
-                                                                        let
-                                                                            reps =
-                                                                                Bitwise.shiftLeftBy code 1 + reps_
-                                                                        in
-                                                                        case go2 i reps currentContextMap of
-                                                                            Err e ->
-                                                                                Err e
-
-                                                                            Ok ( newI, newContextMap ) ->
-                                                                                go newI newContextMap s6
-
-                                                            else
-                                                                go (i + 1) (Array.set i (code - maxRunLengthPrefix) currentContextMap) s5
-
-                                                else
-                                                    case readFewBitsSafe 1 s of
-                                                        ( newState, 1 ) ->
-                                                            Ok ( newState, Array.Helpers.inverseMoveToFrontTransform currentContextMap contextMapSize, numTrees )
-
-                                                        ( newState, _ ) ->
-                                                            Ok ( newState, currentContextMap, numTrees )
-                                        in
-                                        go 0 contextMap s4
+                                                ( newState, _ ) ->
+                                                    Ok ( newState, currentContextMap, numTrees )
+                                in
+                                go 0 contextMap s4
 
 
 decodeHuffmanTreeGroup : Int -> Int -> Int -> State -> Result Error ( State, Array Int )
@@ -1889,18 +1902,9 @@ encodeByteArray arr =
         bytes =
             Array.toList arr
 
-        {- NOTE the bytes can infact use more than the first 8 bits, so we have to mask them -}
+        {- NOTE the values can in practice use more than the first 8 bits, so we have to mask them -}
         go remaining encoders =
             case remaining of
-                x :: y :: z :: w :: rest ->
-                    let
-                        value =
-                            Bitwise.or
-                                (Bitwise.or (Bitwise.shiftLeftBy 24 x) (Bitwise.shiftLeftBy 16 (Bitwise.and 0xFF y)))
-                                (Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF z)) (Bitwise.and 0xFF w))
-                    in
-                    go rest (Encode.unsignedInt32 BE value :: encoders)
-
                 [] ->
                     encoders
 
@@ -1910,16 +1914,25 @@ encodeByteArray arr =
                 [ x, y ] ->
                     let
                         value =
-                            Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF x)) (Bitwise.and 0xFF y)
+                            Bitwise.or (Bitwise.shiftLeftBy 8 x) (Bitwise.and 0xFF y)
                     in
                     Encode.unsignedInt16 BE value :: encoders
 
                 [ x, y, z ] ->
                     let
                         value =
-                            Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF x)) (Bitwise.and 0xFF y)
+                            Bitwise.or (Bitwise.shiftLeftBy 8 x) (Bitwise.and 0xFF y)
                     in
                     Encode.unsignedInt8 z :: Encode.unsignedInt16 BE value :: encoders
+
+                x :: y :: z :: w :: rest ->
+                    let
+                        value =
+                            Bitwise.or
+                                (Bitwise.or (Bitwise.shiftLeftBy 24 x) (Bitwise.shiftLeftBy 16 (Bitwise.and 0xFF y)))
+                                (Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF z)) (Bitwise.and 0xFF w))
+                    in
+                    go rest (Encode.unsignedInt32 BE value :: encoders)
     in
     Encode.sequence (List.reverse (go bytes []))
 
@@ -1979,13 +1992,6 @@ decompressHelp context written s =
         7 ->
             if s.trivialLiteralContext /= 0 then
                 let
-                    maybeLiteral state =
-                        if state.literalBlockLength == 0 then
-                            decodeLiteralBlockSwitch state
-
-                        else
-                            state
-
                     go s0 =
                         if s0.j < s0.insertLength then
                             case maybeReadMoreInput 2030 s0 |> Result.map (maybeLiteral >> topUpAccumulator) of
@@ -1993,20 +1999,20 @@ decompressHelp context written s =
                                     Err e
 
                                 Ok s1 ->
-                                    case readSymbol s1.literalTreeGroup s1.literalTreeIdx s1 of
-                                        ( s2, value ) ->
+                                    case readSymbolPure s1.literalTreeGroup s1.literalTreeIdx s1 of
+                                        ( newBitOffset, value ) ->
                                             let
                                                 newRingBuffer =
-                                                    Array.set s2.pos value s2.ringBuffer
+                                                    Array.set s1.pos value s1.ringBuffer
 
                                                 newPos =
-                                                    s2.pos + 1
+                                                    s1.pos + 1
                                             in
                                             if newPos >= context.fence then
-                                                remainder7 { s2 | nextRunningState = 7, runningState = 13, pos = s2.pos + 1, j = s2.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s2.literalBlockLength - 1 }
+                                                Ok { s1 | nextRunningState = 7, runningState = 13, bitOffset = newBitOffset, pos = s1.pos + 1, j = s1.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s1.literalBlockLength - 1 }
 
                                             else
-                                                go (copyState7 newPos (s2.j + 1) newRingBuffer (s2.literalBlockLength - 1) s2)
+                                                go (copyState7 newBitOffset newPos (s1.j + 1) newRingBuffer (s1.literalBlockLength - 1) s1)
 
                         else
                             remainder7 { s0 | literalBlockLength = s0.literalBlockLength - 1 }
@@ -2192,23 +2198,27 @@ evaluateState4 s =
                                         Ok (updateEvaluateState4 0 7 (copyLengthBits + copyLengthOffset) (insertLengthBits + insertLengthOffset) (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup) (s3.commandBlockLength - 1) s5)
 
 
+maybeLiteral : State -> State
+maybeLiteral state =
+    if state.literalBlockLength == 0 then
+        decodeLiteralBlockSwitch state
+
+    else
+        state
+
+
 evaluateState7 : Context -> Int -> Int -> State -> Result Error State
 evaluateState7 context prevByte1 prevByte2 s0 =
-    let
-        maybeLiteral state =
-            if state.literalBlockLength == 0 then
-                decodeLiteralBlockSwitch state
-
-            else
-                state
-    in
     if s0.j < s0.insertLength then
-        case maybeReadMoreInput 2030 s0 |> Result.map (maybeLiteral >> topUpAccumulator) of
+        case maybeReadMoreInput 2030 s0 of
             Err e ->
                 Err e
 
-            Ok s1 ->
+            Ok s_ ->
                 let
+                    s1 =
+                        topUpAccumulator (maybeLiteral s_)
+
                     i1 =
                         s1.contextLookup.offset1 + prevByte1
 
@@ -2234,20 +2244,20 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                     byte2 =
                         prevByte1
                 in
-                case readSymbol s2.literalTreeGroup literalTreeIdx s2 of
-                    ( s3, byte1 ) ->
+                case readSymbolPure s2.literalTreeGroup literalTreeIdx s2 of
+                    ( newBitOffset, byte1 ) ->
                         let
                             newRingBuffer =
-                                Array.set s3.pos byte1 s3.ringBuffer
+                                Array.set s2.pos byte1 s2.ringBuffer
 
                             newPos =
-                                s3.pos + 1
+                                s2.pos + 1
                         in
                         if newPos >= context.fence then
-                            remainder7 { s3 | nextRunningState = 7, runningState = 13, pos = newPos, j = s3.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s3.literalBlockLength - 1 }
+                            Ok { s2 | nextRunningState = 7, runningState = 13, bitOffset = newBitOffset, pos = newPos, j = s2.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s2.literalBlockLength - 1 }
 
                         else
-                            evaluateState7 context byte1 byte2 (copyState7 newPos (s3.j + 1) newRingBuffer (s3.literalBlockLength - 1) s3)
+                            evaluateState7 context byte1 byte2 (copyState7 newBitOffset newPos (s2.j + 1) newRingBuffer (s2.literalBlockLength - 1) s2)
 
     else
         remainder7 s0
@@ -2707,55 +2717,60 @@ remainder7 s =
 
 decodeLiteralBlockSwitch : State -> State
 decodeLiteralBlockSwitch s0 =
-    case decodeBlockTypeAndLength 0 s0.numLiteralBlockTypes s0 of
-        ( s1, newRings, literalBlockLength ) ->
+    let
+        ( s1, newRings, literalBlockLength ) =
+            decodeBlockTypeAndLength 0 s0.numLiteralBlockTypes s0
+
+        literalBlockType =
+            Array.Helpers.unsafeGet 5 newRings
+
+        newContextMapSlice =
+            Bitwise.shiftLeftBy 6 literalBlockType
+
+        contextMode =
+            Array.Helpers.unsafeGet literalBlockType s1.contextModes
+
+        newLiteralTreeIdx =
+            Bitwise.and (Array.Helpers.unsafeGet newContextMapSlice s1.contextMap) 0xFF
+    in
+    { s1
+        | contextMapSlice = newContextMapSlice
+        , literalBlockLength = literalBlockLength
+        , literalTreeIdx = newLiteralTreeIdx
+        , contextLookup =
             let
-                literalBlockType =
-                    Array.Helpers.unsafeGet 5 newRings
-
-                newContextMapSlice =
-                    Bitwise.shiftLeftBy 6 literalBlockType
-
-                contextMode =
-                    Array.Helpers.unsafeGet literalBlockType s1.contextModes
-
-                newLiteralTreeIdx =
-                    Bitwise.and (Array.Helpers.unsafeGet newContextMapSlice s1.contextMap) 0xFF
+                value =
+                    Bitwise.shiftLeftBy 9 contextMode
             in
-            { s1
-                | contextMapSlice = newContextMapSlice
-                , literalBlockLength = literalBlockLength
-                , literalTreeIdx = newLiteralTreeIdx
-                , contextLookup =
-                    let
-                        value =
-                            Bitwise.shiftLeftBy 9 contextMode
-                    in
-                    { offset1 = value, offset2 = value + 256 }
-                , rings = newRings
-            }
+            { offset1 = value, offset2 = value + 256 }
+        , rings = newRings
+    }
 
 
 decodeDistanceBlockSwitch : State -> State
 decodeDistanceBlockSwitch s0 =
-    case decodeBlockTypeAndLength 2 s0.numDistanceBlockTypes s0 of
-        ( s1, newRings, v ) ->
-            { s1
-                | distanceBlockLength = v
-                , distContextMapSlice = Bitwise.shiftLeftBy 2 (Array.Helpers.unsafeGet 9 newRings)
-                , rings = newRings
-            }
+    let
+        ( s1, newRings, v ) =
+            decodeBlockTypeAndLength 2 s0.numDistanceBlockTypes s0
+    in
+    { s1
+        | distanceBlockLength = v
+        , distContextMapSlice = Bitwise.shiftLeftBy 2 (Array.Helpers.unsafeGet 9 newRings)
+        , rings = newRings
+    }
 
 
 decodeCommandBlockSwitch : State -> State
 decodeCommandBlockSwitch s0 =
-    case decodeBlockTypeAndLength 1 s0.numCommandBlockTypes s0 of
-        ( s1, newRings, v ) ->
-            { s1
-                | commandBlockLength = v
-                , commandTreeIdx = Array.Helpers.unsafeGet 7 newRings
-                , rings = newRings
-            }
+    let
+        ( s1, newRings, v ) =
+            decodeBlockTypeAndLength 1 s0.numCommandBlockTypes s0
+    in
+    { s1
+        | commandBlockLength = v
+        , commandTreeIdx = Array.Helpers.unsafeGet 7 newRings
+        , rings = newRings
+    }
 
 
 decodeBlockTypeAndLength : Int -> Int -> State -> ( State, Array Int, Int )
@@ -3211,8 +3226,8 @@ updateBitOffset newBitOffset orig =
     }
 
 
-copyState7 : Int -> Int -> Array Int -> Int -> State -> State
-copyState7 newPos newJ newRingBuffer literalBlockLength orig =
+copyState7 : Int -> Int -> Int -> Array Int -> Int -> State -> State
+copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     { ringBuffer = newRingBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3230,7 +3245,7 @@ copyState7 newPos newJ newRingBuffer literalBlockLength orig =
     , runningState = orig.runningState
     , nextRunningState = orig.nextRunningState
     , accumulator32 = orig.accumulator32
-    , bitOffset = orig.bitOffset
+    , bitOffset = bitOffset
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = orig.metaBlockLength
