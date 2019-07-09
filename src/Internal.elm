@@ -303,17 +303,12 @@ type alias Error =
     String
 
 
-type alias Decoder a =
-    State -> Result Error ( State, a )
-
-
 type alias State =
     { ringBuffer : Array Int
     , contextModes : Array Int
     , contextMap : Array Int
     , distContextMap : Array Int
     , distExtraBits : Array Int
-    , output : Array Int
     , byteBuffer : Array Int
     , shortBuffer : Array Int
     , intBuffer : Array Int
@@ -375,7 +370,6 @@ defaultState buffer =
     , contextMap = Array.empty
     , distContextMap = Array.empty
     , distExtraBits = Array.empty
-    , output = Array.empty
     , byteBuffer = Array.empty
     , shortBuffer = Array.empty
     , intBuffer = Array.empty
@@ -570,38 +564,6 @@ type alias InputStream =
     { offset : Int
     , buffer : Bytes
     }
-
-
-map : (a -> b) -> Decoder a -> Decoder b
-map f g =
-    \s ->
-        case g s of
-            Err e ->
-                Err e
-
-            Ok ( s2, v ) ->
-                Ok ( s2, f v )
-
-
-succeed : a -> Decoder a
-succeed v =
-    \s -> Ok ( s, v )
-
-
-fail : Error -> Decoder a
-fail e =
-    \s -> Err e
-
-
-andThen : (a -> Decoder b) -> Decoder a -> Decoder b
-andThen f x =
-    \s ->
-        case x s of
-            Err e ->
-                Err e
-
-            Ok ( s2, v ) ->
-                f v s2
 
 
 readNextMetablockHeader : State -> Result Error State
@@ -926,11 +888,11 @@ decodeVarLenUnsignedByte s_ =
                                 ( s3, v + Bitwise.shiftLeftBy n 1 )
 
 
-readMetablockPartition : Int -> Int -> Decoder Int
+readMetablockPartition : Int -> Int -> State -> Result Error ( State, Int )
 readMetablockPartition treeType numBlockTypes s =
     let
         offset =
-            s.blockTrees |> Array.get (2 * treeType) |> Maybe.withDefault 0
+            unsafeGet (2 * treeType) s.blockTrees
     in
     if numBlockTypes <= 1 then
         Ok
@@ -1015,7 +977,7 @@ readSymbol tableGroup tableIdx s =
         ( updateBitOffset newBitOffset s, result )
 
 
-readHuffmanCode : Int -> Int -> Array Int -> Int -> Decoder { tableGroup : Array Int, total_size : Int }
+readHuffmanCode : Int -> Int -> Array Int -> Int -> State -> Result Error ( State, { tableGroup : Array Int, total_size : Int } )
 readHuffmanCode alphabetSizeMax alphabetSizeLimit tableGroup tableIdx s_ =
     let
         checkEnoughRead =
@@ -1710,7 +1672,7 @@ readBlockLength tableGroup tableIdx s0 =
                     ( s4, unsafeGet code block_length_offset + result )
 
 
-map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
+map2 : (a -> b -> c) -> (State -> Result Error ( State, a )) -> (State -> Result Error ( State, b )) -> (State -> Result Error ( State, c ))
 map2 f d1 d2 s =
     case d1 s of
         Err e ->
@@ -1723,20 +1685,6 @@ map2 f d1 d2 s =
 
                 Ok ( s2, x2 ) ->
                     Ok ( s2, f x1 x2 )
-
-
-pure x s =
-    ( s, x )
-
-
-join : Decoder (Decoder a) -> Decoder a
-join f s =
-    case f s of
-        Err e ->
-            Err e
-
-        Ok ( s2, g ) ->
-            g s2
 
 
 readBlocks : State -> Result Error State
@@ -1784,7 +1732,7 @@ readMetablockHuffmanCodesAndContextMaps =
             maybeReadMoreInput 2030 s
                 |> Result.map topUpAccumulator
 
-        readContextModes : Decoder (Array Int)
+        readContextModes : State -> Result Error ( State, Array Int )
         readContextModes state =
             let
                 go1 i s acc =
@@ -1853,7 +1801,7 @@ readMetablockHuffmanCodesAndContextMaps =
             in
             decodeContextMap size (Array.repeat size 0) s0
                 |> Result.andThen
-                    (\( s1, ( contextMap, numLiteralTrees ) ) ->
+                    (\( s1, contextMap, numLiteralTrees ) ->
                         let
                             isTrivial =
                                 let
@@ -1888,7 +1836,7 @@ readMetablockHuffmanCodesAndContextMaps =
                             Err e ->
                                 Err (log "got an error after decoding context map" e)
 
-                            Ok ( s3, ( distContextMap, numDistTrees ) ) ->
+                            Ok ( s3, distContextMap, numDistTrees ) ->
                                 let
                                     s4 =
                                         { s3 | distContextMap = distContextMap }
@@ -1963,7 +1911,7 @@ readMetablockHuffmanCodesAndContextMaps =
         >> Result.andThen readContextMap
 
 
-decodeContextMap : Int -> Array Int -> Decoder ( Array Int, Int )
+decodeContextMap : Int -> Array Int -> State -> Result Error ( State, Array Int, Int )
 decodeContextMap contextMapSize contextMap s0 =
     let
         readMaxRunLengthPrefix =
@@ -1990,7 +1938,7 @@ decodeContextMap contextMapSize contextMap s0 =
                             v + 1
                     in
                     if numTrees == 1 then
-                        Ok ( s2, ( fill 0 0 contextMapSize contextMap, numTrees ) )
+                        Ok ( s2, fill 0 0 contextMapSize contextMap, numTrees )
 
                     else
                         case readMaxRunLengthPrefix (topUpAccumulator s2) of
@@ -2051,18 +1999,14 @@ decodeContextMap contextMapSize contextMap s0 =
                                                                 go (i + 1) (Array.set i (code - maxRunLengthPrefix) currentContextMap) s5
 
                                                 else
-                                                    Ok ( s, ( currentContextMap, numTrees ) )
-                                        in
-                                        go 0 contextMap s4
-                                            |> Result.map
-                                                (\( s, ( currentContextMap, currentNumTrees ) ) ->
                                                     case readFewBitsSafe 1 s of
                                                         ( newState, 1 ) ->
-                                                            ( newState, ( inverseMoveToFrontTransform currentContextMap contextMapSize, currentNumTrees ) )
+                                                            Ok ( newState, inverseMoveToFrontTransform currentContextMap contextMapSize, numTrees )
 
                                                         ( newState, _ ) ->
-                                                            ( newState, ( currentContextMap, currentNumTrees ) )
-                                                )
+                                                            Ok ( newState, currentContextMap, numTrees )
+                                        in
+                                        go 0 contextMap s4
 
 
 moveToFront : Int -> Array Int -> Array Int
@@ -2240,9 +2184,11 @@ decompress written unvalidated =
 
             Ok ( r, _, newWritten ) ->
                 Ok
-                    ( r.output
-                        |> Array.slice 0 newWritten.toOutput
-                        |> encodeByteArray
+                    ( newWritten.output
+                        -- |> Array.slice 0 newWritten.toOutput
+                        -- |> encodeByteArray
+                        |> List.reverse
+                        |> Encode.sequence
                         |> Encode.encode
                     , r
                     , newWritten
@@ -2299,7 +2245,7 @@ type alias Context =
 type alias Written =
     { toOutput : Int
     , fromRingBuffer : Int
-    , output : Array Int
+    , output : List Encode.Encoder
     }
 
 
@@ -2470,34 +2416,31 @@ decompressHelp context written s =
 
         13 ->
             let
-                ( s0, wasWritten, newWritten ) =
+                ( wasWritten, newWritten ) =
                     writeRingBuffer (min s.pos s.ringBufferSize) written s
             in
             if not wasWritten then
-                Ok ( s0, context, newWritten )
+                Ok ( s, context, newWritten )
 
             else
                 let
                     newMaxDistance =
-                        if s0.pos >= s0.maxBackwardDistance then
-                            s0.maxBackwardDistance
+                        if s.pos >= s.maxBackwardDistance then
+                            s.maxBackwardDistance
 
                         else
-                            s0.maxDistance
-
-                    s1 =
-                        s0
+                            s.maxDistance
                 in
-                if s1.pos >= s1.ringBufferSize then
+                if s.pos >= s.ringBufferSize then
                     let
                         newRingBuffer =
-                            copyWithin 0 s1.ringBufferSize s1.pos s1.ringBuffer
+                            copyWithin 0 s.ringBufferSize s.pos s.ringBuffer
                     in
                     decompressHelp context
                         { fromRingBuffer = 0, toOutput = newWritten.toOutput, output = newWritten.output }
-                        { s1
-                            | pos = Bitwise.and s1.pos context.ringBufferMask
-                            , runningState = s1.nextRunningState
+                        { s
+                            | pos = Bitwise.and s.pos context.ringBufferMask
+                            , runningState = s.nextRunningState
                             , ringBuffer = newRingBuffer
                             , maxDistance = newMaxDistance
                         }
@@ -2505,8 +2448,8 @@ decompressHelp context written s =
                 else
                     decompressHelp context
                         newWritten
-                        { s1
-                            | runningState = s1.nextRunningState
+                        { s
+                            | runningState = s.nextRunningState
                             , maxDistance = newMaxDistance
                         }
 
@@ -2875,7 +2818,7 @@ copyBytesToRingBuffer offset length data s =
                 readFromInput s2 offset2 length2 data2
 
 
-writeRingBuffer : Int -> Written -> State -> ( State, Bool, Written )
+writeRingBuffer : Int -> Written -> State -> ( Bool, Written )
 writeRingBuffer ringBufferBytesReady written s =
     let
         toWrite =
@@ -2888,27 +2831,25 @@ writeRingBuffer ringBufferBytesReady written s =
             else
                 0
 
-        ( newState, newerWritten ) =
+        newerWritten =
             if toWrite /= 0 then
                 let
                     slice =
                         Array.slice written.fromRingBuffer (written.fromRingBuffer + toWrite) s.ringBuffer
 
                     newOutput =
-                        Array.append s.output slice
+                        encodeByteArray slice :: written.output
 
+                    -- Array.append written.output slice
                     newWritten =
                         { toOutput = written.toOutput + toWrite, fromRingBuffer = written.fromRingBuffer + toWrite, output = newOutput }
-
-                    s2 =
-                        { s | output = newOutput }
                 in
-                ( s2, newWritten )
+                newWritten
 
             else
-                ( s, written )
+                written
     in
-    ( newState, newerWritten.toOutput < outputLength, newerWritten )
+    ( newerWritten.toOutput < outputLength, newerWritten )
 
 
 remainder7 : Context -> State -> Result Error State
@@ -3554,9 +3495,9 @@ decode input =
                 decodeLoop written state chunks =
                     let
                         newWritten =
-                            { toOutput = 0, fromRingBuffer = written.fromRingBuffer, output = Array.empty }
+                            { toOutput = 0, fromRingBuffer = written.fromRingBuffer, output = [] }
                     in
-                    case decompress newWritten { state | output = Array.empty } of
+                    case decompress newWritten state of
                         Err e ->
                             Err e
 
@@ -3567,7 +3508,7 @@ decode input =
                             else
                                 decodeLoop newerWritten newState (Encode.bytes buffer :: chunks)
             in
-            case decodeLoop { toOutput = 0, fromRingBuffer = 0, output = Array.empty } s [] of
+            case decodeLoop { toOutput = 0, fromRingBuffer = 0, output = [] } s [] of
                 Err e ->
                     Err e
 
@@ -3585,7 +3526,6 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
@@ -3647,7 +3587,6 @@ updateBitOffset newBitOffset orig =
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
@@ -3709,7 +3648,6 @@ copyState7 newPos newJ newRingBuffer literalBlockLength orig =
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
@@ -3771,7 +3709,6 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
@@ -3833,7 +3770,6 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
@@ -3895,7 +3831,6 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
@@ -3957,7 +3892,6 @@ updateRunningState runningState orig =
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
@@ -4019,7 +3953,6 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
@@ -4083,7 +4016,6 @@ copyState orig =
     , contextMap = orig.contextMap
     , distContextMap = orig.distContextMap
     , distExtraBits = orig.distExtraBits
-    , output = orig.output
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
     , intBuffer = orig.intBuffer
