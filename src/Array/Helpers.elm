@@ -1,14 +1,77 @@
-module Array.Helpers exposing (unsafeGet, setSlice, inverseMoveToFrontTransform, fill, update, moveToFront, copyWithin, decodeArray, replicateValue, hasDuplicates)
+module Array.Helpers exposing (copyWithin, decodeArray, fasterEncode, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, unsafeGet, update)
 
 import Array exposing (Array)
 import Bitwise
+import Bytes exposing (Endianness(..))
+import Bytes.Decode as Decode exposing (Decoder)
+import Bytes.Encode as Encode
 import Set
-import Bytes.Decode  as Decode exposing (Decoder)
+
+
+fasterEncode : Array Int -> Encode.Encoder
+fasterEncode values =
+    let
+        ( bytesOnAccum, accum, otherEncoders ) =
+            Array.foldr folder ( 0, 0, [] ) values
+
+        encoders =
+            case bytesOnAccum of
+                0 ->
+                    otherEncoders
+
+                1 ->
+                    Encode.unsignedInt8 accum :: otherEncoders
+
+                2 ->
+                    Encode.unsignedInt16 BE accum :: otherEncoders
+
+                _ ->
+                    let
+                        firstByte =
+                            Bitwise.and 0xFF accum
+
+                        otherBytes =
+                            Bitwise.shiftRightBy 8 accum
+                    in
+                    Encode.unsignedInt16 BE otherBytes :: Encode.unsignedInt8 firstByte :: otherEncoders
+    in
+    encoders
+        |> Encode.sequence
+
+
+folder byte ( bytesOnAccum, accum, encoders ) =
+    case bytesOnAccum of
+        0 ->
+            ( 1, Bitwise.and 0xFF byte, encoders )
+
+        1 ->
+            let
+                value =
+                    Bitwise.or accum
+                        (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF byte))
+            in
+            ( 2, value, encoders )
+
+        2 ->
+            let
+                value =
+                    Bitwise.or accum
+                        (Bitwise.shiftLeftBy 16 (Bitwise.and 0xFF byte))
+            in
+            ( 3, value, encoders )
+
+        _ ->
+            let
+                value =
+                    Bitwise.or accum
+                        (Bitwise.shiftLeftBy 24 (Bitwise.and 0xFF byte))
+            in
+            ( 0, 0, Encode.unsignedInt32 BE value :: encoders )
 
 
 {-| TODO test
 -}
-replicateValue : Array a -> Int -> Int -> Int -> a  -> Array a
+replicateValue : Array a -> Int -> Int -> Int -> a -> Array a
 replicateValue table offset step end item =
     let
         newEnd =
@@ -23,33 +86,42 @@ replicateValue table offset step end item =
     else
         newTable
 
+
 hasDuplicates : Array comparable -> Bool
-hasDuplicates = Array.toList >> hasDuplicatesList 
+hasDuplicates =
+    Array.toList >> hasDuplicatesList
+
 
 hasDuplicatesList : List comparable -> Bool
-hasDuplicatesList list = 
-    let go seen remaining = 
-            case remaining of 
-                [] -> False
-                x :: xs -> 
-                    if Set.member x seen then 
-                        False 
-                    else 
-                        go  (Set.insert x seen) xs
+hasDuplicatesList list =
+    let
+        go seen remaining =
+            case remaining of
+                [] ->
+                    False
+
+                x :: xs ->
+                    if Set.member x seen then
+                        False
+
+                    else
+                        go (Set.insert x seen) xs
     in
-        go Set.empty list
+    go Set.empty list
+
 
 decodeArray : Int -> Decoder a -> Decoder (Array a)
-decodeArray n decoder = 
-    Decode.loop (n, Array.empty) (decodeArrayHelp decoder)
+decodeArray n decoder =
+    Decode.loop ( n, Array.empty ) (decodeArrayHelp decoder)
 
 
-decodeArrayHelp : Decoder a -> (Int, Array a) -> Decoder (Decode.Step (Int, Array a) (Array a) )
-decodeArrayHelp decoder (remaining, accum ) = 
-    if remaining > 0 then 
-        decoder |> Decode.map (\new -> Decode.Loop (remaining - 1, Array.push new accum ))
-    else 
-        Decode.succeed (Decode.Done accum ) 
+decodeArrayHelp : Decoder a -> ( Int, Array a ) -> Decoder (Decode.Step ( Int, Array a ) (Array a))
+decodeArrayHelp decoder ( remaining, accum ) =
+    if remaining > 0 then
+        decoder |> Decode.map (\new -> Decode.Loop ( remaining - 1, Array.push new accum ))
+
+    else
+        Decode.succeed (Decode.Done accum)
 
 
 {-| TODO write tests
@@ -79,8 +151,6 @@ copyWithin destination sourceStart sourceEnd arr =
         copyWithin (destination + 1) (sourceStart + 1) sourceEnd newArray
 
 
-
-
 unsafeGet : Int -> Array Int -> Int
 unsafeGet i arr =
     case Array.get i arr of
@@ -91,7 +161,7 @@ unsafeGet i arr =
             v
 
 
-setSlice  : Array a -> Int -> Array a -> Array a
+setSlice : Array a -> Int -> Array a -> Array a
 setSlice slice startIndex whole =
     let
         before =
@@ -104,6 +174,7 @@ setSlice slice startIndex whole =
             Array.append before (Array.append slice after)
     in
     result
+
 
 moveToFront : Int -> Array Int -> Array Int
 moveToFront initialIndex v =

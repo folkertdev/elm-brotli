@@ -1,4 +1,4 @@
-module Internal exposing (Error(..), buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, encodeByteArray, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, sortSymbols, topUpAccumulator)
+module Internal exposing (Error(..), buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, encodeByteList, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, sortSymbols, topUpAccumulator)
 
 import Array exposing (Array)
 import Array.Helpers
@@ -30,6 +30,13 @@ type Error
     | CorruptedPaddingBits
 
 
+type alias TreeGroup =
+    { literalTreeGroup : Array Int
+    , commandTreeGroup : Array Int
+    , distanceTreeGroup : Array Int
+    }
+
+
 type alias State =
     { ringBuffer : Array Int
     , contextModes : Array Int
@@ -41,9 +48,7 @@ type alias State =
     , intBuffer : Array Int
     , rings : Array Int
     , blockTrees : Array Int
-    , literalTreeGroup : Array Int
-    , commandTreeGroup : Array Int
-    , distanceTreeGroup : Array Int
+    , treeGroup : TreeGroup
     , distOffset : Array Int
     , runningState : Int
     , nextRunningState : Int
@@ -68,10 +73,7 @@ type alias State =
     , insertLength : Int
     , contextMapSlice : Int
     , distContextMapSlice : Int
-    , contextLookup :
-        { offset1 : Int
-        , offset2 : Int
-        }
+    , contextLookup : ContextLookup
     , distanceCode : Int
     , numDirectDistanceCodes : Int
     , distancePostfixMask : Int
@@ -85,6 +87,18 @@ type alias State =
     , input : InputStream
     , flags : Flags
     }
+
+
+type ContextLookup
+    = ContextLookup Int
+
+
+contextLookupOffset1 (ContextLookup v) =
+    v
+
+
+contextLookupOffset2 (ContextLookup v) =
+    v + 256
 
 
 type alias Flags =
@@ -117,9 +131,11 @@ defaultState buffer =
     , intBuffer = Array.empty
     , rings = Array.fromList [ 16, 15, 11, 4, 0, 0, 0, 0, 0, 0 ]
     , blockTrees = Array.empty
-    , literalTreeGroup = Array.empty
-    , commandTreeGroup = Array.empty
-    , distanceTreeGroup = Array.empty
+    , treeGroup =
+        { literalTreeGroup = Array.empty
+        , commandTreeGroup = Array.empty
+        , distanceTreeGroup = Array.empty
+        }
     , distOffset = Array.empty
     , runningState = 0
     , nextRunningState = 0
@@ -144,7 +160,7 @@ defaultState buffer =
     , insertLength = 0
     , contextMapSlice = 0
     , distContextMapSlice = 0
-    , contextLookup = { offset1 = 0, offset2 = 0 }
+    , contextLookup = ContextLookup 0
     , distanceCode = 0
     , numDirectDistanceCodes = 0
     , distancePostfixMask = 0
@@ -325,9 +341,11 @@ readNextMetablockHeader s =
         let
             s2 =
                 { s
-                    | literalTreeGroup = Array.empty
-                    , commandTreeGroup = Array.empty
-                    , distanceTreeGroup = Array.empty
+                    | treeGroup =
+                        { literalTreeGroup = Array.empty
+                        , commandTreeGroup = Array.empty
+                        , distanceTreeGroup = Array.empty
+                        }
                 }
         in
         maybeReadMoreInput 2030 s2
@@ -338,56 +356,64 @@ readNextMetablockHeader s =
                         Ok s4
 
                     else
-                        (if s4.flags.isUncompressed || s4.flags.isMetadata then
-                            case jumpToByteBoundary s4 of
-                                Err e ->
-                                    Err e
+                        let
+                            findNextState =
+                                if s4.flags.isUncompressed || s4.flags.isMetadata then
+                                    case jumpToByteBoundary s4 of
+                                        Err e ->
+                                            Err e
 
-                                Ok s5 ->
-                                    Ok
-                                        (updateRunningState
-                                            (if s5.flags.isMetadata then
-                                                5
+                                        Ok s5 ->
+                                            Ok
+                                                ( s5
+                                                , if s5.flags.isMetadata then
+                                                    5
 
-                                             else
-                                                6
-                                            )
-                                            s5
-                                        )
+                                                  else
+                                                    6
+                                                )
 
-                         else
-                            Ok (updateRunningState 3 s4)
-                        )
-                            |> Result.andThen
-                                (\s6 ->
-                                    if s6.flags.isMetadata then
-                                        Ok s6
+                                else
+                                    Ok ( s4, 3 )
+                        in
+                        case findNextState of
+                            Err e ->
+                                Err e
+
+                            Ok ( s6, nextRunningState ) ->
+                                if s6.flags.isMetadata then
+                                    Ok (updateRunningState nextRunningState s6)
+
+                                else
+                                    let
+                                        temp =
+                                            s6.expectedTotalSize + s6.metaBlockLength
+
+                                        s7 =
+                                            { s6
+                                                | expectedTotalSize =
+                                                    if temp > Bitwise.shiftLeftBy 30 1 then
+                                                        Bitwise.shiftLeftBy 30 1
+
+                                                    else
+                                                        temp
+                                                , runningState = nextRunningState
+                                            }
+                                    in
+                                    if s7.ringBufferSize < s7.maxRingBufferSize then
+                                        case maybeReallocateRingBuffer s7 of
+                                            Nothing ->
+                                                Ok s7
+
+                                            Just { ringBuffer, ringBufferSize } ->
+                                                Ok { s7 | ringBuffer = ringBuffer, ringBufferSize = ringBufferSize }
 
                                     else
-                                        let
-                                            temp =
-                                                s6.expectedTotalSize + s6.metaBlockLength
-
-                                            s7 =
-                                                { s6
-                                                    | expectedTotalSize =
-                                                        if temp > Bitwise.shiftLeftBy 30 1 then
-                                                            Bitwise.shiftLeftBy 30 1
-
-                                                        else
-                                                            temp
-                                                }
-                                        in
-                                        if s7.ringBufferSize < s7.maxRingBufferSize then
-                                            maybeReallocateRingBuffer s7
-
-                                        else
-                                            Ok s7
-                                )
+                                        Ok s7
                 )
 
 
-maybeReallocateRingBuffer : State -> Result Error State
+maybeReallocateRingBuffer : State -> Maybe { ringBuffer : Array Int, ringBufferSize : Int }
 maybeReallocateRingBuffer s =
     let
         newSize =
@@ -420,7 +446,7 @@ maybeReallocateRingBuffer s =
                 initialSize
     in
     if newSize < s.ringBufferSize then
-        Ok s
+        Nothing
 
     else
         let
@@ -434,7 +460,7 @@ maybeReallocateRingBuffer s =
                 else
                     Array.append (Array.slice 0 s.ringBufferSize s.ringBuffer) (Array.repeat (ringBufferSizeWithSlack - s.ringBufferSize) 0)
         in
-        Ok { s | ringBuffer = newBuffer, ringBufferSize = newSize }
+        Just { ringBuffer = newBuffer, ringBufferSize = newSize }
 
 
 decodeMetaBlockBytes : State -> Result Error State
@@ -1592,7 +1618,8 @@ readMetablockHuffmanCodesAndContextMaps =
                                         (\( s5, ( literalTreeGroup, commandTreeGroup ) ) ->
                                             let
                                                 s6 =
-                                                    { s5 | literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup }
+                                                    -- { s5 | literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup }
+                                                    s5
 
                                                 distanceAlphabet =
                                                     if s.flags.isLargeWindow then
@@ -1622,19 +1649,18 @@ readMetablockHuffmanCodesAndContextMaps =
                                                     decodeHuffmanTreeGroup distanceAlphabetSizeMax distanceAlphabetSizeLimit numDistTrees s6
                                                         |> Result.andThen
                                                             (\( s7, distanceTreeGroup ) ->
-                                                                case calculateDistanceLut distanceAlphabetSizeLimit { s7 | distanceTreeGroup = distanceTreeGroup } of
+                                                                case calculateDistanceLut distanceAlphabetSizeLimit s7 of
                                                                     s8 ->
                                                                         let
+                                                                            treeGroup =
+                                                                                { literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup, distanceTreeGroup = distanceTreeGroup }
+
                                                                             s9 =
                                                                                 { s8
                                                                                     | contextMapSlice = 0
+                                                                                    , treeGroup = treeGroup
                                                                                     , distContextMapSlice = 0
-                                                                                    , contextLookup =
-                                                                                        let
-                                                                                            value =
-                                                                                                Array.Helpers.unsafeGet 0 s8.contextModes * 512
-                                                                                        in
-                                                                                        { offset1 = value, offset2 = value + 256 }
+                                                                                    , contextLookup = ContextLookup (Array.Helpers.unsafeGet 0 s8.contextModes * 512)
                                                                                     , literalTreeIdx = 0
                                                                                     , commandTreeIdx = 0
                                                                                     , rings =
@@ -1886,8 +1912,6 @@ decompress written unvalidated =
             Ok ( r, _, newWritten ) ->
                 Ok
                     ( newWritten.output
-                        -- |> Array.slice 0 newWritten.toOutput
-                        -- |> encodeByteArray
                         |> List.reverse
                         |> Encode.sequence
                         |> Encode.encode
@@ -1896,45 +1920,38 @@ decompress written unvalidated =
                     )
 
 
-encodeByteArray : Array Int -> Encode.Encoder
-encodeByteArray arr =
-    let
-        bytes =
-            Array.toList arr
+encodeByteList : List Int -> List Encode.Encoder -> List Encode.Encoder
+encodeByteList remaining encoders =
+    {- NOTE the values can in practice use more than the first 8 bits, so we have to mask them -}
+    case remaining of
+        [] ->
+            encoders
 
-        {- NOTE the values can in practice use more than the first 8 bits, so we have to mask them -}
-        go remaining encoders =
-            case remaining of
-                [] ->
-                    encoders
+        [ x ] ->
+            Encode.unsignedInt8 x :: encoders
 
-                [ x ] ->
-                    Encode.unsignedInt8 x :: encoders
+        [ x, y ] ->
+            let
+                value =
+                    Bitwise.or (Bitwise.shiftLeftBy 8 x) (Bitwise.and 0xFF y)
+            in
+            Encode.unsignedInt16 BE value :: encoders
 
-                [ x, y ] ->
-                    let
-                        value =
-                            Bitwise.or (Bitwise.shiftLeftBy 8 x) (Bitwise.and 0xFF y)
-                    in
-                    Encode.unsignedInt16 BE value :: encoders
+        [ x, y, z ] ->
+            let
+                value =
+                    Bitwise.or (Bitwise.shiftLeftBy 8 x) (Bitwise.and 0xFF y)
+            in
+            Encode.unsignedInt8 z :: Encode.unsignedInt16 BE value :: encoders
 
-                [ x, y, z ] ->
-                    let
-                        value =
-                            Bitwise.or (Bitwise.shiftLeftBy 8 x) (Bitwise.and 0xFF y)
-                    in
-                    Encode.unsignedInt8 z :: Encode.unsignedInt16 BE value :: encoders
-
-                x :: y :: z :: w :: rest ->
-                    let
-                        value =
-                            Bitwise.or
-                                (Bitwise.or (Bitwise.shiftLeftBy 24 x) (Bitwise.shiftLeftBy 16 (Bitwise.and 0xFF y)))
-                                (Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF z)) (Bitwise.and 0xFF w))
-                    in
-                    go rest (Encode.unsignedInt32 BE value :: encoders)
-    in
-    Encode.sequence (List.reverse (go bytes []))
+        x :: y :: z :: w :: rest ->
+            let
+                value =
+                    Bitwise.or
+                        (Bitwise.or (Bitwise.shiftLeftBy 24 x) (Bitwise.shiftLeftBy 16 (Bitwise.and 0xFF y)))
+                        (Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF z)) (Bitwise.and 0xFF w))
+            in
+            encodeByteList rest (Encode.unsignedInt32 BE value :: encoders)
 
 
 type alias Context =
@@ -1999,7 +2016,7 @@ decompressHelp context written s =
                                     Err e
 
                                 Ok s1 ->
-                                    case readSymbolPure s1.literalTreeGroup s1.literalTreeIdx s1 of
+                                    case readSymbolPure s1.treeGroup.literalTreeGroup s1.literalTreeIdx s1 of
                                         ( newBitOffset, value ) ->
                                             let
                                                 newRingBuffer =
@@ -2163,7 +2180,7 @@ evaluateState4 s =
                 in
                 case maybeCommandBlock |> topUpAccumulator of
                     s2 ->
-                        case readSymbol s2.commandTreeGroup s2.commandTreeIdx s2 of
+                        case readSymbol s2.treeGroup.commandTreeGroup s2.commandTreeIdx s2 of
                             ( s3, v ) ->
                                 let
                                     cmdCode =
@@ -2220,10 +2237,10 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                         topUpAccumulator (maybeLiteral s_)
 
                     i1 =
-                        s1.contextLookup.offset1 + prevByte1
+                        contextLookupOffset1 s1.contextLookup + prevByte1
 
                     i2 =
-                        s1.contextLookup.offset2 + prevByte2
+                        contextLookupOffset2 s1.contextLookup + prevByte2
 
                     v1 =
                         Array.Helpers.unsafeGet i1 Constants.lookup
@@ -2244,7 +2261,7 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                     byte2 =
                         prevByte1
                 in
-                case readSymbolPure s2.literalTreeGroup literalTreeIdx s2 of
+                case readSymbolPure s2.treeGroup.literalTreeGroup literalTreeIdx s2 of
                     ( newBitOffset, byte1 ) ->
                         let
                             newRingBuffer =
@@ -2526,7 +2543,7 @@ writeRingBuffer ringBufferBytesReady written s =
                         Array.slice written.fromRingBuffer (written.fromRingBuffer + toWrite) s.ringBuffer
 
                     newOutput =
-                        encodeByteArray slice :: written.output
+                        Array.Helpers.fasterEncode slice :: written.output
 
                     -- Array.append written.output slice
                     newWritten =
@@ -2597,8 +2614,7 @@ remainder7 s =
                                     distTreeIdx =
                                         Bitwise.and 0xFF (Array.Helpers.unsafeGet (s2.distContextMapSlice + oldDistanceCode) s2.distContextMap)
                                 in
-                                -- guess: the distanceTreeGroup is incorrect
-                                case readSymbol s2.distanceTreeGroup distTreeIdx s2 of
+                                case readSymbol s2.treeGroup.distanceTreeGroup distTreeIdx s2 of
                                     ( s3, distanceCode ) ->
                                         if distanceCode < 16 then
                                             let
@@ -2737,12 +2753,7 @@ decodeLiteralBlockSwitch s0 =
         | contextMapSlice = newContextMapSlice
         , literalBlockLength = literalBlockLength
         , literalTreeIdx = newLiteralTreeIdx
-        , contextLookup =
-            let
-                value =
-                    Bitwise.shiftLeftBy 9 contextMode
-            in
-            { offset1 = value, offset2 = value + 256 }
+        , contextLookup = ContextLookup (Bitwise.shiftLeftBy 9 contextMode)
         , rings = newRings
     }
 
@@ -3128,9 +3139,7 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = orig.runningState
     , nextRunningState = orig.nextRunningState
@@ -3183,9 +3192,7 @@ updateBitOffset newBitOffset orig =
     , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = orig.runningState
     , nextRunningState = orig.nextRunningState
@@ -3238,9 +3245,7 @@ copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = orig.runningState
     , nextRunningState = orig.nextRunningState
@@ -3293,9 +3298,7 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , intBuffer = orig.intBuffer
     , rings = rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = runningState
     , nextRunningState = orig.nextRunningState
@@ -3348,9 +3351,7 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = runningState
     , nextRunningState = orig.nextRunningState
@@ -3403,9 +3404,7 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = runningState
     , nextRunningState = orig.nextRunningState
@@ -3458,9 +3457,7 @@ updateRunningState runningState orig =
     , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = runningState
     , nextRunningState = orig.nextRunningState
@@ -3513,9 +3510,7 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = runningState
     , nextRunningState = nextRunningState
@@ -3570,9 +3565,7 @@ copyState orig =
     , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
-    , literalTreeGroup = orig.literalTreeGroup
-    , commandTreeGroup = orig.commandTreeGroup
-    , distanceTreeGroup = orig.distanceTreeGroup
+    , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
     , runningState = orig.runningState
     , nextRunningState = orig.nextRunningState
