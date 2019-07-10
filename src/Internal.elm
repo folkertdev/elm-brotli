@@ -80,7 +80,6 @@ type alias State =
     , num : Num
     , blockLength : BlockLength
     , pos : Int
-    , maxDistance : Int
     , distRbIdx : Int
     , trivialLiteralContext : Int
     , literalTreeIdx : Int
@@ -94,6 +93,7 @@ type alias State =
     , distanceConstants : Distance
     , distance : Int
     , copyLength : Int
+    , maxDistance : Int
     , maxBackwardDistance : Int
     , maxRingBufferSize : Int
     , ringBufferSize : Int
@@ -1670,35 +1670,39 @@ readMetablockHuffmanCodesAndContextMaps =
                                                 Err e
 
                                             Ok ( distanceAlphabetSizeMax, distanceAlphabetSizeLimit ) ->
-                                                decodeHuffmanTreeGroup distanceAlphabetSizeMax distanceAlphabetSizeLimit numDistTrees s6
-                                                    |> Result.andThen
-                                                        (\( s7, distanceTreeGroup ) ->
-                                                            case calculateDistanceLut distanceAlphabetSizeLimit s7 of
-                                                                s8 ->
-                                                                    let
-                                                                        treeGroup =
-                                                                            { literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup, distanceTreeGroup = distanceTreeGroup }
+                                                case decodeHuffmanTreeGroup distanceAlphabetSizeMax distanceAlphabetSizeLimit numDistTrees s6 of
+                                                    Err e ->
+                                                        Err e
 
-                                                                        s9 =
-                                                                            { s8
-                                                                                | contextMapSlice = 0
-                                                                                , treeGroup = treeGroup
-                                                                                , distContextMapSlice = 0
-                                                                                , contextLookup = ContextLookup (Array.Helpers.unsafeGet 0 s8.contextModes * 512)
-                                                                                , literalTreeIdx = 0
-                                                                                , commandTreeIdx = 0
-                                                                                , rings =
-                                                                                    s8.rings
-                                                                                        |> Array.set 4 1
-                                                                                        |> Array.set 5 0
-                                                                                        |> Array.set 6 1
-                                                                                        |> Array.set 7 0
-                                                                                        |> Array.set 8 1
-                                                                                        |> Array.set 9 0
-                                                                            }
-                                                                    in
-                                                                    Ok s9
-                                                        )
+                                                    Ok ( s7, distanceTreeGroup ) ->
+                                                        let
+                                                            { distExtraBits, distOffset } =
+                                                                calculateDistanceLut distanceAlphabetSizeLimit s7
+
+                                                            treeGroup =
+                                                                { literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup, distanceTreeGroup = distanceTreeGroup }
+
+                                                            s9 =
+                                                                { s7
+                                                                    | contextMapSlice = 0
+                                                                    , treeGroup = treeGroup
+                                                                    , distContextMapSlice = 0
+                                                                    , contextLookup = ContextLookup (Array.Helpers.unsafeGet 0 s7.contextModes * 512)
+                                                                    , literalTreeIdx = 0
+                                                                    , commandTreeIdx = 0
+                                                                    , distExtraBits = distExtraBits
+                                                                    , distOffset = distOffset
+                                                                    , rings =
+                                                                        s7.rings
+                                                                            |> Array.set 4 1
+                                                                            |> Array.set 5 0
+                                                                            |> Array.set 6 1
+                                                                            |> Array.set 7 0
+                                                                            |> Array.set 8 1
+                                                                            |> Array.set 9 0
+                                                                }
+                                                        in
+                                                        Ok s9
                                     )
     in
     readBlocks
@@ -1834,7 +1838,7 @@ decodeHuffmanTreeGroup alphabetSizeMax alphabetSizeLimit n =
     go 0 initialGroup n
 
 
-calculateDistanceLut : Int -> State -> State
+calculateDistanceLut : Int -> State -> { distExtraBits : Array Int, distOffset : Array Int }
 calculateDistanceLut alphabetSizeLimit state =
     let
         npostfix =
@@ -1846,36 +1850,34 @@ calculateDistanceLut alphabetSizeLimit state =
         postfix =
             Bitwise.shiftLeftBy npostfix 1
 
-        go1 i j bits base upperLimit s =
+        go1 i j bits base upperLimit distExtraBits distOffset =
             if j < upperLimit then
                 go1 (i + 1)
                     (j + 1)
                     bits
                     base
                     upperLimit
-                    { s
-                        | distExtraBits = Array.set i bits s.distExtraBits
-                        , distOffset = Array.set i (j + base) s.distOffset
-                    }
+                    (Array.set i bits distExtraBits)
+                    (Array.set i (j + base) distOffset)
 
             else
-                ( s, i )
+                ( distExtraBits, distOffset, i )
 
-        go2 bits half ( s, i ) =
+        go2 bits half ( distExtraBits, distOffset, i ) =
             if i < alphabetSizeLimit then
                 let
                     base =
                         ndirect + Bitwise.shiftLeftBy npostfix (Bitwise.shiftLeftBy bits (2 + half) - 4) + 1
 
-                    ( newS, newI ) =
-                        go1 i 0 bits base postfix s
+                    ( newDistExtraBits, newDistOffset, newI ) =
+                        go1 i 0 bits base postfix distExtraBits distOffset
                 in
-                go2 (bits + half) (Bitwise.xor half 1) ( newS, newI )
+                go2 (bits + half) (Bitwise.xor half 1) ( newDistExtraBits, newDistOffset, newI )
 
             else
-                s
+                { distExtraBits = distExtraBits, distOffset = distOffset }
     in
-    go1 16 0 0 1 ndirect state
+    go1 16 0 0 1 ndirect state.distExtraBits state.distOffset
         |> go2 1 0
 
 
