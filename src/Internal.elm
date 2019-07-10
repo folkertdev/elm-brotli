@@ -405,45 +405,34 @@ readNextMetablockHeader s =
 
                                 else
                                     let
-                                        temp =
-                                            s6.expectedTotalSize + s6.metaBlockLength
-
-                                        s7 =
-                                            { s6
-                                                | expectedTotalSize =
-                                                    if temp > Bitwise.shiftLeftBy 30 1 then
-                                                        Bitwise.shiftLeftBy 30 1
-
-                                                    else
-                                                        temp
-                                                , runningState = nextRunningState
-                                            }
+                                        newExpectedTotalSize =
+                                            min (s6.expectedTotalSize + s6.metaBlockLength) (Bitwise.shiftLeftBy 30 1)
                                     in
-                                    if s7.ringBufferSize < s7.maxRingBufferSize then
-                                        case maybeReallocateRingBuffer s7 of
+                                    if s6.ringBufferSize < s6.maxRingBufferSize then
+                                        case maybeReallocateRingBuffer newExpectedTotalSize s6 of
                                             Nothing ->
-                                                Ok s7
+                                                Ok { s6 | expectedTotalSize = newExpectedTotalSize, runningState = nextRunningState }
 
                                             Just { ringBuffer, ringBufferSize } ->
-                                                Ok { s7 | ringBuffer = ringBuffer, ringBufferSize = ringBufferSize }
+                                                Ok { s6 | ringBuffer = ringBuffer, ringBufferSize = ringBufferSize, expectedTotalSize = newExpectedTotalSize, runningState = nextRunningState }
 
                                     else
-                                        Ok s7
+                                        Ok { s6 | expectedTotalSize = newExpectedTotalSize, runningState = nextRunningState }
                 )
 
 
-maybeReallocateRingBuffer : State -> Maybe { ringBuffer : Array Int, ringBufferSize : Int }
-maybeReallocateRingBuffer s =
+maybeReallocateRingBuffer : Int -> { state | flags : { flags | inputEnd : Bool }, ringBuffer : Array Int, ringBufferSize : Int, maxRingBufferSize : Int } -> Maybe { ringBuffer : Array Int, ringBufferSize : Int }
+maybeReallocateRingBuffer expectedTotalSize s =
     let
         newSize =
             let
                 initialSize =
                     s.maxRingBufferSize
             in
-            if initialSize > s.expectedTotalSize then
+            if initialSize > expectedTotalSize then
                 let
                     minimalNewSize =
-                        s.expectedTotalSize
+                        expectedTotalSize
 
                     calculate1 size =
                         if Bitwise.shiftRightBy 1 size > minimalNewSize then
@@ -2216,24 +2205,29 @@ evaluateState4 s =
                                     copyLengthOffset =
                                         Array.Helpers.unsafeGet (cmdCode + 2) Constants.cmd_lookup
 
-                                    readInsertLength state =
+                                    readLengths state =
                                         let
-                                            extraBits =
+                                            extraBits1 =
                                                 Bitwise.and insertAndCopyExtraBits 0xFF
-                                        in
-                                        readBits extraBits state
 
-                                    readCopyLength ( state, insertLengthBits ) =
-                                        let
-                                            extraBits =
+                                            extraBits2 =
                                                 Bitwise.shiftRightBy 8 insertAndCopyExtraBits
                                         in
-                                        readBits extraBits state
-                                            |> (\( s_, w ) -> ( s_, ( insertLengthBits, w ) ))
+                                        readBits2 extraBits1 extraBits2 state
+
+                                    ( s5, insertLengthBits, copyLengthBits ) =
+                                        readLengths s3
                                 in
-                                case s3 |> topUpAccumulator |> readInsertLength |> readCopyLength of
-                                    ( s5, ( insertLengthBits, copyLengthBits ) ) ->
-                                        Ok (updateEvaluateState4 0 7 (copyLengthBits + copyLengthOffset) (insertLengthBits + insertLengthOffset) (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup) (s3.blockLength.commandBlockLength - 1) s5)
+                                Ok
+                                    (updateEvaluateState4
+                                        0
+                                        7
+                                        (copyLengthBits + copyLengthOffset)
+                                        (insertLengthBits + insertLengthOffset)
+                                        (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup)
+                                        (s3.blockLength.commandBlockLength - 1)
+                                        s5
+                                    )
 
 
 maybeLiteral : State -> State
@@ -2924,6 +2918,51 @@ jumpToByteBoundary s =
 
     else
         Ok s
+
+
+readBits2 : Int -> Int -> State -> ( State, Int, Int )
+readBits2 nbits mbits s0 =
+    if nbits <= 16 && mbits <= 16 then
+        let
+            ( bitOffset1, halfOffset1, accumulator32_1 ) =
+                topUpPure s0.bitOffset s0.halfOffset s0.accumulator32 s0.shortBuffer
+
+            ( bitOffset2, val1 ) =
+                pureReadFewBits nbits bitOffset1 accumulator32_1
+
+            ( bitOffset3, halfOffset3, accumulator32_3 ) =
+                topUpPure bitOffset2 halfOffset1 accumulator32_1 s0.shortBuffer
+
+            ( bitOffset4, val2 ) =
+                pureReadFewBits mbits bitOffset3 accumulator32_3
+        in
+        ( updateAccumulator bitOffset4 halfOffset3 accumulator32_3 s0
+        , val1
+        , val2
+        )
+
+    else
+        let
+            ( s1, v1 ) =
+                readBits nbits s0
+
+            ( s2, v2 ) =
+                readBits mbits s1
+        in
+        ( s2, v1, v2 )
+
+
+topUpPure bitOffset halfOffset accumulator32 shortBuffer =
+    if bitOffset >= 16 then
+        let
+            next =
+                Array.Helpers.unsafeGet halfOffset shortBuffer
+                    |> Bitwise.shiftLeftBy 16
+        in
+        ( bitOffset - 16, halfOffset + 1, Bitwise.or next (Bitwise.shiftRightZfBy 16 accumulator32) )
+
+    else
+        ( bitOffset, halfOffset, accumulator32 )
 
 
 readBits : Int -> State -> ( State, Int )
