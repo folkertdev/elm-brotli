@@ -54,7 +54,6 @@ type alias BlockLength =
 type alias Distance =
     { distancePostfixBits : Int
     , numDirectDistanceCodes : Int
-    , distancePostfixMask : Int
     }
 
 
@@ -183,7 +182,6 @@ defaultState buffer =
     , distanceCode = 0
     , distanceConstants =
         { numDirectDistanceCodes = 0
-        , distancePostfixMask = 0
         , distancePostfixBits = 0
         }
     , distance = 0
@@ -1579,7 +1577,6 @@ readMetablockHuffmanCodesAndContextMaps =
                                 | distanceConstants =
                                     { distancePostfixBits = a
                                     , numDirectDistanceCodes = Bitwise.shiftLeftBy a b
-                                    , distancePostfixMask = Bitwise.shiftLeftBy a 1 - 1
                                     }
                             }
                     in
