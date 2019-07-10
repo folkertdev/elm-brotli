@@ -51,6 +51,13 @@ type alias BlockLength =
     }
 
 
+type alias Distance =
+    { distancePostfixBits : Int
+    , numDirectDistanceCodes : Int
+    , distancePostfixMask : Int
+    }
+
+
 type alias State =
     { ringBuffer : Array Int
     , contextModes : Array Int
@@ -85,9 +92,7 @@ type alias State =
     , distContextMapSlice : Int
     , contextLookup : ContextLookup
     , distanceCode : Int
-    , numDirectDistanceCodes : Int
-    , distancePostfixMask : Int
-    , distancePostfixBits : Int
+    , distanceConstants : Distance
     , distance : Int
     , copyLength : Int
     , maxBackwardDistance : Int
@@ -176,9 +181,11 @@ defaultState buffer =
     , distContextMapSlice = 0
     , contextLookup = ContextLookup 0
     , distanceCode = 0
-    , numDirectDistanceCodes = 0
-    , distancePostfixMask = 0
-    , distancePostfixBits = 0
+    , distanceConstants =
+        { numDirectDistanceCodes = 0
+        , distancePostfixMask = 0
+        , distancePostfixBits = 0
+        }
     , distance = 0
     , copyLength = 0
     , maxBackwardDistance = 0
@@ -1569,9 +1576,11 @@ readMetablockHuffmanCodesAndContextMaps =
                     let
                         newerState =
                             { newState
-                                | distancePostfixBits = a
-                                , numDirectDistanceCodes = Bitwise.shiftLeftBy a b
-                                , distancePostfixMask = Bitwise.shiftLeftBy a 1 - 1
+                                | distanceConstants =
+                                    { distancePostfixBits = a
+                                    , numDirectDistanceCodes = Bitwise.shiftLeftBy a b
+                                    , distancePostfixMask = Bitwise.shiftLeftBy a 1 - 1
+                                    }
                             }
                     in
                     go1 0 newerState Array.empty
@@ -1584,115 +1593,116 @@ readMetablockHuffmanCodesAndContextMaps =
                 size =
                     Bitwise.shiftLeftBy 6 s.num.numLiteralBlockTypes
             in
-            decodeContextMap size (Array.repeat size 0) s0
-                |> Result.andThen
-                    (\( s1, contextMap, numLiteralTrees ) ->
-                        let
-                            isTrivial =
-                                let
-                                    go j =
-                                        if j < Bitwise.shiftLeftBy 6 s1.num.numLiteralBlockTypes then
-                                            if Array.Helpers.unsafeGet j contextMap /= Bitwise.shiftRightBy 6 j then
-                                                False
+            case decodeContextMap size (Array.repeat size 0) s0 of
+                Err e ->
+                    Err e
 
-                                            else
-                                                go (j + 1)
-
-                                        else
-                                            True
-                                in
-                                go 0
-
-                            s2 =
-                                { s1
-                                    | contextMap = contextMap
-                                    , trivialLiteralContext =
-                                        if isTrivial then
-                                            1
+                Ok ( s1, contextMap, numLiteralTrees ) ->
+                    let
+                        isTrivial =
+                            let
+                                go j =
+                                    if j < Bitwise.shiftLeftBy 6 s1.num.numLiteralBlockTypes then
+                                        if Array.Helpers.unsafeGet j contextMap /= Bitwise.shiftRightBy 6 j then
+                                            False
 
                                         else
-                                            0
-                                }
+                                            go (j + 1)
 
-                            distanceSize =
-                                Bitwise.shiftLeftBy 2 s.num.numDistanceBlockTypes
-                        in
-                        case decodeContextMap distanceSize (Array.repeat distanceSize 0) s2 of
-                            Err e ->
-                                Err e
+                                    else
+                                        True
+                            in
+                            go 0
 
-                            Ok ( s3, distContextMap, numDistTrees ) ->
-                                let
-                                    s4 =
-                                        { s3 | distContextMap = distContextMap }
-                                in
-                                map2 Tuple.pair
-                                    (decodeHuffmanTreeGroup 256 256 numLiteralTrees)
-                                    (decodeHuffmanTreeGroup 704 704 s4.num.numCommandBlockTypes)
-                                    s4
-                                    |> Result.andThen
-                                        (\( s5, ( literalTreeGroup, commandTreeGroup ) ) ->
-                                            let
-                                                s6 =
-                                                    -- { s5 | literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup }
-                                                    s5
+                        s2 =
+                            { s1
+                                | contextMap = contextMap
+                                , trivialLiteralContext =
+                                    if isTrivial then
+                                        1
 
-                                                distanceAlphabet =
-                                                    if s.flags.isLargeWindow then
-                                                        let
-                                                            max =
-                                                                calculateDistanceAlphabetSize s6.distancePostfixBits s6.numDirectDistanceCodes 62
-                                                        in
-                                                        case calculateDistanceAlphabetLimit 0x7FFFFFFC s6.distancePostfixBits s6.numDirectDistanceCodes of
-                                                            Ok v ->
-                                                                Ok ( max, v )
+                                    else
+                                        0
+                            }
 
-                                                            Err e ->
-                                                                Err e
+                        distanceSize =
+                            Bitwise.shiftLeftBy 2 s.num.numDistanceBlockTypes
+                    in
+                    case decodeContextMap distanceSize (Array.repeat distanceSize 0) s2 of
+                        Err e ->
+                            Err e
 
-                                                    else
-                                                        let
-                                                            max =
-                                                                calculateDistanceAlphabetSize s6.distancePostfixBits s6.numDirectDistanceCodes 24
-                                                        in
-                                                        Ok ( max, max )
-                                            in
-                                            case distanceAlphabet of
-                                                Err e ->
-                                                    Err e
+                        Ok ( s3, distContextMap, numDistTrees ) ->
+                            let
+                                s4 =
+                                    { s3 | distContextMap = distContextMap }
+                            in
+                            map2 Tuple.pair
+                                (decodeHuffmanTreeGroup 256 256 numLiteralTrees)
+                                (decodeHuffmanTreeGroup 704 704 s4.num.numCommandBlockTypes)
+                                s4
+                                |> Result.andThen
+                                    (\( s5, ( literalTreeGroup, commandTreeGroup ) ) ->
+                                        let
+                                            s6 =
+                                                -- { s5 | literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup }
+                                                s5
 
-                                                Ok ( distanceAlphabetSizeMax, distanceAlphabetSizeLimit ) ->
-                                                    decodeHuffmanTreeGroup distanceAlphabetSizeMax distanceAlphabetSizeLimit numDistTrees s6
-                                                        |> Result.andThen
-                                                            (\( s7, distanceTreeGroup ) ->
-                                                                case calculateDistanceLut distanceAlphabetSizeLimit s7 of
-                                                                    s8 ->
-                                                                        let
-                                                                            treeGroup =
-                                                                                { literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup, distanceTreeGroup = distanceTreeGroup }
+                                            distanceAlphabet =
+                                                if s.flags.isLargeWindow then
+                                                    let
+                                                        max =
+                                                            calculateDistanceAlphabetSize s6.distanceConstants.distancePostfixBits s6.distanceConstants.numDirectDistanceCodes 62
+                                                    in
+                                                    case calculateDistanceAlphabetLimit 0x7FFFFFFC s6.distanceConstants.distancePostfixBits s6.distanceConstants.numDirectDistanceCodes of
+                                                        Ok v ->
+                                                            Ok ( max, v )
 
-                                                                            s9 =
-                                                                                { s8
-                                                                                    | contextMapSlice = 0
-                                                                                    , treeGroup = treeGroup
-                                                                                    , distContextMapSlice = 0
-                                                                                    , contextLookup = ContextLookup (Array.Helpers.unsafeGet 0 s8.contextModes * 512)
-                                                                                    , literalTreeIdx = 0
-                                                                                    , commandTreeIdx = 0
-                                                                                    , rings =
-                                                                                        s8.rings
-                                                                                            |> Array.set 4 1
-                                                                                            |> Array.set 5 0
-                                                                                            |> Array.set 6 1
-                                                                                            |> Array.set 7 0
-                                                                                            |> Array.set 8 1
-                                                                                            |> Array.set 9 0
-                                                                                }
-                                                                        in
-                                                                        Ok s9
-                                                            )
-                                        )
-                    )
+                                                        Err e ->
+                                                            Err e
+
+                                                else
+                                                    let
+                                                        max =
+                                                            calculateDistanceAlphabetSize s6.distanceConstants.distancePostfixBits s6.distanceConstants.numDirectDistanceCodes 24
+                                                    in
+                                                    Ok ( max, max )
+                                        in
+                                        case distanceAlphabet of
+                                            Err e ->
+                                                Err e
+
+                                            Ok ( distanceAlphabetSizeMax, distanceAlphabetSizeLimit ) ->
+                                                decodeHuffmanTreeGroup distanceAlphabetSizeMax distanceAlphabetSizeLimit numDistTrees s6
+                                                    |> Result.andThen
+                                                        (\( s7, distanceTreeGroup ) ->
+                                                            case calculateDistanceLut distanceAlphabetSizeLimit s7 of
+                                                                s8 ->
+                                                                    let
+                                                                        treeGroup =
+                                                                            { literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup, distanceTreeGroup = distanceTreeGroup }
+
+                                                                        s9 =
+                                                                            { s8
+                                                                                | contextMapSlice = 0
+                                                                                , treeGroup = treeGroup
+                                                                                , distContextMapSlice = 0
+                                                                                , contextLookup = ContextLookup (Array.Helpers.unsafeGet 0 s8.contextModes * 512)
+                                                                                , literalTreeIdx = 0
+                                                                                , commandTreeIdx = 0
+                                                                                , rings =
+                                                                                    s8.rings
+                                                                                        |> Array.set 4 1
+                                                                                        |> Array.set 5 0
+                                                                                        |> Array.set 6 1
+                                                                                        |> Array.set 7 0
+                                                                                        |> Array.set 8 1
+                                                                                        |> Array.set 9 0
+                                                                            }
+                                                                    in
+                                                                    Ok s9
+                                                        )
+                                    )
     in
     readBlocks
         >> Result.andThen (\s -> topUp s)
@@ -1827,23 +1837,14 @@ decodeHuffmanTreeGroup alphabetSizeMax alphabetSizeLimit n =
     go 0 initialGroup n
 
 
-type alias LutState a =
-    { a
-        | distExtraBits : Array Int
-        , distOffset : Array Int
-        , distancePostfixBits : Int
-        , numDirectDistanceCodes : Int
-    }
-
-
-calculateDistanceLut : Int -> LutState a -> LutState a
+calculateDistanceLut : Int -> State -> State
 calculateDistanceLut alphabetSizeLimit state =
     let
         npostfix =
-            state.distancePostfixBits
+            state.distanceConstants.distancePostfixBits
 
         ndirect =
-            state.numDirectDistanceCodes
+            state.distanceConstants.numDirectDistanceCodes
 
         postfix =
             Bitwise.shiftLeftBy npostfix 1
@@ -2699,7 +2700,7 @@ remainder7 s =
                                                     let
                                                         newDistance =
                                                             Array.Helpers.unsafeGet distanceCode s4.distOffset
-                                                                + Bitwise.shiftLeftBy s4.distancePostfixBits bits
+                                                                + Bitwise.shiftLeftBy s4.distanceConstants.distancePostfixBits bits
                                                     in
                                                     Ok
                                                         { state = s4
@@ -3235,9 +3236,7 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
@@ -3284,9 +3283,7 @@ updateBitOffset newBitOffset orig =
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
@@ -3341,9 +3338,7 @@ copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
@@ -3398,9 +3393,7 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
@@ -3447,9 +3440,7 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
@@ -3504,9 +3495,7 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
@@ -3553,9 +3542,7 @@ updateRunningState runningState orig =
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
@@ -3602,9 +3589,7 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
@@ -3653,9 +3638,7 @@ copyState orig =
     , distContextMapSlice = orig.distContextMapSlice
     , contextLookup = orig.contextLookup
     , distanceCode = orig.distanceCode
-    , numDirectDistanceCodes = orig.numDirectDistanceCodes
-    , distancePostfixMask = orig.distancePostfixMask
-    , distancePostfixBits = orig.distancePostfixBits
+    , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
