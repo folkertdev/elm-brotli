@@ -37,6 +37,20 @@ type alias TreeGroup =
     }
 
 
+type alias Num =
+    { numLiteralBlockTypes : Int
+    , numCommandBlockTypes : Int
+    , numDistanceBlockTypes : Int
+    }
+
+
+type alias BlockLength =
+    { literalBlockLength : Int
+    , commandBlockLength : Int
+    , distanceBlockLength : Int
+    }
+
+
 type alias State =
     { ringBuffer : Array Int
     , contextModes : Array Int
@@ -57,12 +71,8 @@ type alias State =
     , halfOffset : Int
     , tailBytes : Int
     , metaBlockLength : Int
-    , literalBlockLength : Int
-    , numLiteralBlockTypes : Int
-    , commandBlockLength : Int
-    , numCommandBlockTypes : Int
-    , distanceBlockLength : Int
-    , numDistanceBlockTypes : Int
+    , num : Num
+    , blockLength : BlockLength
     , pos : Int
     , maxDistance : Int
     , distRbIdx : Int
@@ -144,12 +154,16 @@ defaultState buffer =
     , halfOffset = 0
     , tailBytes = 0
     , metaBlockLength = 0
-    , literalBlockLength = 0
-    , numLiteralBlockTypes = 0
-    , commandBlockLength = 0
-    , numCommandBlockTypes = 0
-    , distanceBlockLength = 0
-    , numDistanceBlockTypes = 0
+    , num =
+        { numLiteralBlockTypes = 0
+        , numCommandBlockTypes = 0
+        , numDistanceBlockTypes = 0
+        }
+    , blockLength =
+        { literalBlockLength = 0
+        , commandBlockLength = 0
+        , distanceBlockLength = 0
+        }
     , pos = 0
     , maxDistance = 0
     , distRbIdx = 0
@@ -1458,40 +1472,42 @@ map2 f d1 d2 s =
 -}
 readBlocks : State -> Result Error State
 readBlocks s0 =
-    let
-        readLiteralBlock initial =
-            case decodeVarLenUnsignedByte initial of
-                ( s1, numLiteralBlockTypes ) ->
-                    case readMetablockPartition 0 (numLiteralBlockTypes + 1) { s1 | numLiteralBlockTypes = numLiteralBlockTypes + 1 } of
-                        Err e ->
-                            Err e
+    case decodeVarLenUnsignedByte s0 of
+        ( s1, numLiteralBlockTypes ) ->
+            -- case readMetablockPartition 0 (numLiteralBlockTypes + 1) { s1 | numLiteralBlockTypes = numLiteralBlockTypes + 1 } of
+            case readMetablockPartition 0 (numLiteralBlockTypes + 1) s1 of
+                Err e ->
+                    Err e
 
-                        Ok ( s2, literalBlockLength ) ->
-                            Ok { s2 | literalBlockLength = literalBlockLength }
+                Ok ( s2, literalBlockLength ) ->
+                    case decodeVarLenUnsignedByte s2 of
+                        ( s3, numCommandBlockTypes ) ->
+                            case readMetablockPartition 1 (numCommandBlockTypes + 1) s3 of
+                                Err e ->
+                                    Err e
 
-        readCommandBlock initial =
-            case decodeVarLenUnsignedByte initial of
-                ( s1, numCommandBlockTypes ) ->
-                    case readMetablockPartition 1 (numCommandBlockTypes + 1) { s1 | numCommandBlockTypes = numCommandBlockTypes + 1 } of
-                        Err e ->
-                            Err e
+                                Ok ( s4, commandBlockLength ) ->
+                                    case decodeVarLenUnsignedByte s4 of
+                                        ( s5, numDistanceBlockTypes ) ->
+                                            case readMetablockPartition 2 (numDistanceBlockTypes + 1) s5 of
+                                                Err e ->
+                                                    Err e
 
-                        Ok ( s2, commandBlockLength ) ->
-                            Ok { s2 | commandBlockLength = commandBlockLength }
+                                                Ok ( s6, distanceBlockLength ) ->
+                                                    let
+                                                        num =
+                                                            { numDistanceBlockTypes = numDistanceBlockTypes + 1
+                                                            , numCommandBlockTypes = numCommandBlockTypes + 1
+                                                            , numLiteralBlockTypes = numLiteralBlockTypes + 1
+                                                            }
 
-        readDistanceBlock initial =
-            case decodeVarLenUnsignedByte initial of
-                ( s1, numDistanceBlockTypes ) ->
-                    case readMetablockPartition 2 (numDistanceBlockTypes + 1) { s1 | numDistanceBlockTypes = numDistanceBlockTypes + 1 } of
-                        Err e ->
-                            Err e
-
-                        Ok ( s2, distanceBlockLength ) ->
-                            Ok { s2 | distanceBlockLength = distanceBlockLength }
-    in
-    readLiteralBlock s0
-        |> Result.andThen readCommandBlock
-        |> Result.andThen readDistanceBlock
+                                                        blockLength =
+                                                            { literalBlockLength = literalBlockLength
+                                                            , commandBlockLength = commandBlockLength
+                                                            , distanceBlockLength = distanceBlockLength
+                                                            }
+                                                    in
+                                                    Ok { s6 | num = num, blockLength = blockLength }
 
 
 readMetablockHuffmanCodesAndContextMaps : State -> Result Error State
@@ -1505,10 +1521,10 @@ readMetablockHuffmanCodesAndContextMaps =
         readContextModes state =
             let
                 go1 i s acc =
-                    if i < s.numLiteralBlockTypes then
+                    if i < s.num.numLiteralBlockTypes then
                         let
                             limit =
-                                min (i + 96) s.numLiteralBlockTypes
+                                min (i + 96) s.num.numLiteralBlockTypes
                         in
                         case go2 limit i s acc of
                             Err e ->
@@ -1566,7 +1582,7 @@ readMetablockHuffmanCodesAndContextMaps =
                     { s | contextModes = contextModes }
 
                 size =
-                    Bitwise.shiftLeftBy 6 s.numLiteralBlockTypes
+                    Bitwise.shiftLeftBy 6 s.num.numLiteralBlockTypes
             in
             decodeContextMap size (Array.repeat size 0) s0
                 |> Result.andThen
@@ -1575,7 +1591,7 @@ readMetablockHuffmanCodesAndContextMaps =
                             isTrivial =
                                 let
                                     go j =
-                                        if j < Bitwise.shiftLeftBy 6 s1.numLiteralBlockTypes then
+                                        if j < Bitwise.shiftLeftBy 6 s1.num.numLiteralBlockTypes then
                                             if Array.Helpers.unsafeGet j contextMap /= Bitwise.shiftRightBy 6 j then
                                                 False
 
@@ -1599,7 +1615,7 @@ readMetablockHuffmanCodesAndContextMaps =
                                 }
 
                             distanceSize =
-                                Bitwise.shiftLeftBy 2 s.numDistanceBlockTypes
+                                Bitwise.shiftLeftBy 2 s.num.numDistanceBlockTypes
                         in
                         case decodeContextMap distanceSize (Array.repeat distanceSize 0) s2 of
                             Err e ->
@@ -1612,7 +1628,7 @@ readMetablockHuffmanCodesAndContextMaps =
                                 in
                                 map2 Tuple.pair
                                     (decodeHuffmanTreeGroup 256 256 numLiteralTrees)
-                                    (decodeHuffmanTreeGroup 704 704 s4.numCommandBlockTypes)
+                                    (decodeHuffmanTreeGroup 704 704 s4.num.numCommandBlockTypes)
                                     s4
                                     |> Result.andThen
                                         (\( s5, ( literalTreeGroup, commandTreeGroup ) ) ->
@@ -2026,13 +2042,33 @@ decompressHelp context written s =
                                                     s1.pos + 1
                                             in
                                             if newPos >= context.fence then
-                                                Ok { s1 | nextRunningState = 7, runningState = 13, bitOffset = newBitOffset, pos = s1.pos + 1, j = s1.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s1.literalBlockLength - 1 }
+                                                let
+                                                    oldBlockLengths =
+                                                        s1.blockLength
+
+                                                    newBlockLengths =
+                                                        { literalBlockLength = s1.blockLength.literalBlockLength - 1
+                                                        , commandBlockLength = oldBlockLengths.commandBlockLength
+                                                        , distanceBlockLength = oldBlockLengths.distanceBlockLength
+                                                        }
+                                                in
+                                                Ok { s1 | nextRunningState = 7, runningState = 13, bitOffset = newBitOffset, pos = s1.pos + 1, j = s1.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths }
 
                                             else
-                                                go (copyState7 newBitOffset newPos (s1.j + 1) newRingBuffer (s1.literalBlockLength - 1) s1)
+                                                go (copyState7 newBitOffset newPos (s1.j + 1) newRingBuffer (s1.blockLength.literalBlockLength - 1) s1)
 
                         else
-                            remainder7 { s0 | literalBlockLength = s0.literalBlockLength - 1 }
+                            let
+                                oldBlockLengths =
+                                    s0.blockLength
+
+                                newBlockLengths =
+                                    { literalBlockLength = s0.blockLength.literalBlockLength - 1
+                                    , commandBlockLength = oldBlockLengths.commandBlockLength
+                                    , distanceBlockLength = oldBlockLengths.distanceBlockLength
+                                    }
+                            in
+                            remainder7 { s0 | blockLength = newBlockLengths }
                 in
                 case go s of
                     Err e ->
@@ -2172,7 +2208,7 @@ evaluateState4 s =
             Ok s1 ->
                 let
                     maybeCommandBlock =
-                        if s1.commandBlockLength == 0 then
+                        if s1.blockLength.commandBlockLength == 0 then
                             decodeCommandBlockSwitch s1
 
                         else
@@ -2212,12 +2248,12 @@ evaluateState4 s =
                                 in
                                 case s3 |> topUpAccumulator |> readInsertLength |> readCopyLength of
                                     ( s5, ( insertLengthBits, copyLengthBits ) ) ->
-                                        Ok (updateEvaluateState4 0 7 (copyLengthBits + copyLengthOffset) (insertLengthBits + insertLengthOffset) (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup) (s3.commandBlockLength - 1) s5)
+                                        Ok (updateEvaluateState4 0 7 (copyLengthBits + copyLengthOffset) (insertLengthBits + insertLengthOffset) (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup) (s3.blockLength.commandBlockLength - 1) s5)
 
 
 maybeLiteral : State -> State
 maybeLiteral state =
-    if state.literalBlockLength == 0 then
+    if state.blockLength.literalBlockLength == 0 then
         decodeLiteralBlockSwitch state
 
     else
@@ -2271,10 +2307,20 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                                 s2.pos + 1
                         in
                         if newPos >= context.fence then
-                            Ok { s2 | nextRunningState = 7, runningState = 13, bitOffset = newBitOffset, pos = newPos, j = s2.j + 1, ringBuffer = newRingBuffer, literalBlockLength = s2.literalBlockLength - 1 }
+                            let
+                                oldBlockLengths =
+                                    s2.blockLength
+
+                                newBlockLengths =
+                                    { literalBlockLength = s2.blockLength.literalBlockLength - 1
+                                    , commandBlockLength = oldBlockLengths.commandBlockLength
+                                    , distanceBlockLength = oldBlockLengths.distanceBlockLength
+                                    }
+                            in
+                            Ok { s2 | nextRunningState = 7, runningState = 13, bitOffset = newBitOffset, pos = newPos, j = s2.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths }
 
                         else
-                            evaluateState7 context byte1 byte2 (copyState7 newBitOffset newPos (s2.j + 1) newRingBuffer (s2.literalBlockLength - 1) s2)
+                            evaluateState7 context byte1 byte2 (copyState7 newBitOffset newPos (s2.j + 1) newRingBuffer (s2.blockLength.literalBlockLength - 1) s2)
 
     else
         remainder7 s0
@@ -2592,14 +2638,14 @@ remainder7 s =
                             { state = s1
                             , distance = newDistance
                             , distanceCode = oldDistanceCode
-                            , distanceBlockLength = s1.distanceBlockLength
+                            , distanceBlockLength = s1.blockLength.distanceBlockLength
                             , metaBlockLength = newMetaBlockLength
                             }
 
                     else
                         let
                             maybeDistance state =
-                                if state.distanceBlockLength == 0 then
+                                if state.blockLength.distanceBlockLength == 0 then
                                     decodeDistanceBlockSwitch state
 
                                 else
@@ -2632,7 +2678,7 @@ remainder7 s =
                                                     { state = s3
                                                     , distance = newDistance
                                                     , distanceCode = distanceCode
-                                                    , distanceBlockLength = s3.distanceBlockLength - 1
+                                                    , distanceBlockLength = s3.blockLength.distanceBlockLength - 1
                                                     , metaBlockLength = newMetaBlockLength
                                                     }
 
@@ -2659,7 +2705,7 @@ remainder7 s =
                                                         { state = s4
                                                         , distance = newDistance
                                                         , distanceCode = distanceCode
-                                                        , distanceBlockLength = s4.distanceBlockLength - 1
+                                                        , distanceBlockLength = s4.blockLength.distanceBlockLength - 1
                                                         , metaBlockLength = newMetaBlockLength
                                                         }
             in
@@ -2735,7 +2781,7 @@ decodeLiteralBlockSwitch : State -> State
 decodeLiteralBlockSwitch s0 =
     let
         ( s1, newRings, literalBlockLength ) =
-            decodeBlockTypeAndLength 0 s0.numLiteralBlockTypes s0
+            decodeBlockTypeAndLength 0 s0.num.numLiteralBlockTypes s0
 
         literalBlockType =
             Array.Helpers.unsafeGet 5 newRings
@@ -2748,10 +2794,19 @@ decodeLiteralBlockSwitch s0 =
 
         newLiteralTreeIdx =
             Bitwise.and (Array.Helpers.unsafeGet newContextMapSlice s1.contextMap) 0xFF
+
+        oldBlockLengths =
+            s1.blockLength
+
+        newBlockLengths =
+            { literalBlockLength = literalBlockLength
+            , commandBlockLength = oldBlockLengths.commandBlockLength
+            , distanceBlockLength = oldBlockLengths.distanceBlockLength
+            }
     in
     { s1
         | contextMapSlice = newContextMapSlice
-        , literalBlockLength = literalBlockLength
+        , blockLength = newBlockLengths
         , literalTreeIdx = newLiteralTreeIdx
         , contextLookup = ContextLookup (Bitwise.shiftLeftBy 9 contextMode)
         , rings = newRings
@@ -2762,10 +2817,19 @@ decodeDistanceBlockSwitch : State -> State
 decodeDistanceBlockSwitch s0 =
     let
         ( s1, newRings, v ) =
-            decodeBlockTypeAndLength 2 s0.numDistanceBlockTypes s0
+            decodeBlockTypeAndLength 2 s0.num.numDistanceBlockTypes s0
+
+        oldBlockLengths =
+            s1.blockLength
+
+        newBlockLengths =
+            { literalBlockLength = oldBlockLengths.literalBlockLength
+            , commandBlockLength = oldBlockLengths.commandBlockLength
+            , distanceBlockLength = v
+            }
     in
     { s1
-        | distanceBlockLength = v
+        | blockLength = newBlockLengths
         , distContextMapSlice = Bitwise.shiftLeftBy 2 (Array.Helpers.unsafeGet 9 newRings)
         , rings = newRings
     }
@@ -2775,10 +2839,19 @@ decodeCommandBlockSwitch : State -> State
 decodeCommandBlockSwitch s0 =
     let
         ( s1, newRings, v ) =
-            decodeBlockTypeAndLength 1 s0.numCommandBlockTypes s0
+            decodeBlockTypeAndLength 1 s0.num.numCommandBlockTypes s0
+
+        oldBlockLength =
+            s1.blockLength
+
+        newBlockLength =
+            { literalBlockLength = oldBlockLength.literalBlockLength
+            , commandBlockLength = v
+            , distanceBlockLength = oldBlockLength.distanceBlockLength
+            }
     in
     { s1
-        | commandBlockLength = v
+        | blockLength = newBlockLength
         , commandTreeIdx = Array.Helpers.unsafeGet 7 newRings
         , rings = newRings
     }
@@ -3148,12 +3221,8 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , halfOffset = newHalfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = orig.metaBlockLength
-    , literalBlockLength = orig.literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = orig.commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength = orig.blockLength
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
@@ -3201,12 +3270,8 @@ updateBitOffset newBitOffset orig =
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = orig.metaBlockLength
-    , literalBlockLength = orig.literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = orig.commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength = orig.blockLength
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
@@ -3254,12 +3319,16 @@ copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = orig.metaBlockLength
-    , literalBlockLength = literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = orig.commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength =
+        let
+            oldBlockLength =
+                orig.blockLength
+        in
+        { literalBlockLength = literalBlockLength
+        , commandBlockLength = oldBlockLength.commandBlockLength
+        , distanceBlockLength = oldBlockLength.distanceBlockLength
+        }
     , pos = newPos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
@@ -3307,12 +3376,16 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = metaBlockLength
-    , literalBlockLength = orig.literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = orig.commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength =
+        let
+            oldBlockLength =
+                orig.blockLength
+        in
+        { literalBlockLength = oldBlockLength.literalBlockLength
+        , commandBlockLength = oldBlockLength.commandBlockLength
+        , distanceBlockLength = distanceBlockLength
+        }
     , pos = orig.pos
     , maxDistance = maxDistance
     , distRbIdx = distRbIdx
@@ -3360,12 +3433,8 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = metaBlockLength
-    , literalBlockLength = orig.literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = orig.commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength = orig.blockLength
     , pos = pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
@@ -3413,12 +3482,16 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = orig.metaBlockLength
-    , literalBlockLength = orig.literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength =
+        let
+            oldBlockLength =
+                orig.blockLength
+        in
+        { literalBlockLength = oldBlockLength.literalBlockLength
+        , commandBlockLength = commandBlockLength
+        , distanceBlockLength = oldBlockLength.distanceBlockLength
+        }
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
@@ -3466,12 +3539,8 @@ updateRunningState runningState orig =
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = orig.metaBlockLength
-    , literalBlockLength = orig.literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = orig.commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength = orig.blockLength
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
@@ -3519,12 +3588,8 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = metaBlockLength
-    , literalBlockLength = orig.literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = orig.commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength = orig.blockLength
     , pos = pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
@@ -3574,12 +3639,8 @@ copyState orig =
     , halfOffset = orig.halfOffset
     , tailBytes = orig.tailBytes
     , metaBlockLength = orig.metaBlockLength
-    , literalBlockLength = orig.literalBlockLength
-    , numLiteralBlockTypes = orig.numLiteralBlockTypes
-    , commandBlockLength = orig.commandBlockLength
-    , numCommandBlockTypes = orig.numCommandBlockTypes
-    , distanceBlockLength = orig.distanceBlockLength
-    , numDistanceBlockTypes = orig.numDistanceBlockTypes
+    , num = orig.num
+    , blockLength = orig.blockLength
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
