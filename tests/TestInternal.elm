@@ -1,16 +1,18 @@
 module TestInternal exposing (bug1, bug2, bug3, charCodeAt, wholePipeline)
 
 import Array
+import Array.Helpers
 import Bytes exposing (Endianness(..))
 import Bytes.Decode as Decode
 import Bytes.Encode as Encode
+import Constants
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, int, list, string)
 import Internal
 import Test exposing (..)
 import Transforms
-import Array.Helpers
-import Constants
+
+
 wholePipeline =
     let
         stringFromInt32 buffer =
@@ -368,14 +370,14 @@ bug2 =
                 in
                 Constants.calculateOffsets
                     |> Expect.equal ( insert, copy )
-        , fuzz (Fuzz.list (Fuzz.intRange 0 255)) "encodeByteArray" <|
+        , fuzz (Fuzz.list (Fuzz.intRange 0 512)) "encodeByteArray" <|
             \bytes ->
                 let
                     n =
                         List.length bytes
 
                     new =
-                        Internal.encodeByteArray (Array.fromList bytes)
+                        Array.Helpers.fasterEncode (Array.fromList bytes)
                             |> Encode.encode
                             |> Decode.decode (Array.Helpers.decodeArray n Decode.unsignedInt8)
 
