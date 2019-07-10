@@ -81,7 +81,7 @@ type alias State =
     , blockLength : BlockLength
     , pos : Int
     , distRbIdx : Int
-    , trivialLiteralContext : Int
+    , isTrivialLiteralContext : Bool
     , literalTreeIdx : Int
     , commandTreeIdx : Int
     , j : Int
@@ -171,7 +171,7 @@ defaultState buffer =
     , pos = 0
     , maxDistance = 0
     , distRbIdx = 0
-    , trivialLiteralContext = 0
+    , isTrivialLiteralContext = False
     , literalTreeIdx = 0
     , commandTreeIdx = 0
     , j = 0
@@ -1585,7 +1585,7 @@ readMetablockHuffmanCodesAndContextMaps =
         readContextMap ( s, contextModes ) =
             let
                 s0 =
-                    { s | contextModes = contextModes }
+                    s
 
                 size =
                     Bitwise.shiftLeftBy 6 s.num.numLiteralBlockTypes
@@ -1611,47 +1611,28 @@ readMetablockHuffmanCodesAndContextMaps =
                             in
                             go 0
 
-                        s2 =
-                            { s1
-                                | contextMap = contextMap
-                                , trivialLiteralContext =
-                                    if isTrivial then
-                                        1
-
-                                    else
-                                        0
-                            }
-
                         distanceSize =
                             Bitwise.shiftLeftBy 2 s.num.numDistanceBlockTypes
                     in
-                    case decodeContextMap distanceSize (Array.repeat distanceSize 0) s2 of
+                    case decodeContextMap distanceSize (Array.repeat distanceSize 0) s1 of
                         Err e ->
                             Err e
 
                         Ok ( s3, distContextMap, numDistTrees ) ->
-                            let
-                                s4 =
-                                    { s3 | distContextMap = distContextMap }
-                            in
                             map2 Tuple.pair
                                 (decodeHuffmanTreeGroup 256 256 numLiteralTrees)
-                                (decodeHuffmanTreeGroup 704 704 s4.num.numCommandBlockTypes)
-                                s4
+                                (decodeHuffmanTreeGroup 704 704 s3.num.numCommandBlockTypes)
+                                s3
                                 |> Result.andThen
                                     (\( s5, ( literalTreeGroup, commandTreeGroup ) ) ->
                                         let
-                                            s6 =
-                                                -- { s5 | literalTreeGroup = literalTreeGroup, commandTreeGroup = commandTreeGroup }
-                                                s5
-
                                             distanceAlphabet =
                                                 if s.flags.isLargeWindow then
                                                     let
                                                         max =
-                                                            calculateDistanceAlphabetSize s6.distanceConstants.distancePostfixBits s6.distanceConstants.numDirectDistanceCodes 62
+                                                            calculateDistanceAlphabetSize s5.distanceConstants.distancePostfixBits s5.distanceConstants.numDirectDistanceCodes 62
                                                     in
-                                                    case calculateDistanceAlphabetLimit 0x7FFFFFFC s6.distanceConstants.distancePostfixBits s6.distanceConstants.numDirectDistanceCodes of
+                                                    case calculateDistanceAlphabetLimit 0x7FFFFFFC s5.distanceConstants.distancePostfixBits s5.distanceConstants.numDirectDistanceCodes of
                                                         Ok v ->
                                                             Ok ( max, v )
 
@@ -1661,7 +1642,7 @@ readMetablockHuffmanCodesAndContextMaps =
                                                 else
                                                     let
                                                         max =
-                                                            calculateDistanceAlphabetSize s6.distanceConstants.distancePostfixBits s6.distanceConstants.numDirectDistanceCodes 24
+                                                            calculateDistanceAlphabetSize s5.distanceConstants.distancePostfixBits s5.distanceConstants.numDirectDistanceCodes 24
                                                     in
                                                     Ok ( max, max )
                                         in
@@ -1670,7 +1651,7 @@ readMetablockHuffmanCodesAndContextMaps =
                                                 Err e
 
                                             Ok ( distanceAlphabetSizeMax, distanceAlphabetSizeLimit ) ->
-                                                case decodeHuffmanTreeGroup distanceAlphabetSizeMax distanceAlphabetSizeLimit numDistTrees s6 of
+                                                case decodeHuffmanTreeGroup distanceAlphabetSizeMax distanceAlphabetSizeLimit numDistTrees s5 of
                                                     Err e ->
                                                         Err e
 
@@ -1687,11 +1668,15 @@ readMetablockHuffmanCodesAndContextMaps =
                                                                     | contextMapSlice = 0
                                                                     , treeGroup = treeGroup
                                                                     , distContextMapSlice = 0
-                                                                    , contextLookup = ContextLookup (Array.Helpers.unsafeGet 0 s7.contextModes * 512)
+                                                                    , contextLookup = ContextLookup (Array.Helpers.unsafeGet 0 contextModes * 512)
                                                                     , literalTreeIdx = 0
                                                                     , commandTreeIdx = 0
+                                                                    , contextModes = contextModes
                                                                     , distExtraBits = distExtraBits
                                                                     , distOffset = distOffset
+                                                                    , distContextMap = distContextMap
+                                                                    , contextMap = contextMap
+                                                                    , isTrivialLiteralContext = isTrivial
                                                                     , rings =
                                                                         s7.rings
                                                                             |> Array.set 4 1
@@ -2023,7 +2008,7 @@ decompressHelp context written s =
                     decompressHelp context written newState
 
         7 ->
-            if s.trivialLiteralContext /= 0 then
+            if s.isTrivialLiteralContext then
                 let
                     go s0 =
                         if s0.j < s0.insertLength then
@@ -3226,7 +3211,7 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = orig.j
@@ -3273,7 +3258,7 @@ updateBitOffset newBitOffset orig =
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = orig.j
@@ -3328,7 +3313,7 @@ copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     , pos = newPos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = newJ
@@ -3383,7 +3368,7 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , pos = orig.pos
     , maxDistance = maxDistance
     , distRbIdx = distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = j
@@ -3430,7 +3415,7 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , pos = pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = j
@@ -3485,7 +3470,7 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = j
@@ -3532,7 +3517,7 @@ updateRunningState runningState orig =
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = orig.j
@@ -3579,7 +3564,7 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , pos = pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = orig.j
@@ -3628,7 +3613,7 @@ copyState orig =
     , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
-    , trivialLiteralContext = orig.trivialLiteralContext
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
     , literalTreeIdx = orig.literalTreeIdx
     , commandTreeIdx = orig.commandTreeIdx
     , j = orig.j
