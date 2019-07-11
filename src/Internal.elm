@@ -347,14 +347,10 @@ type alias InputStream =
     }
 
 
-readNextMetablockHeader : State -> Result Error State
+readNextMetablockHeader : State -> Result Error ( Int, Int, State )
 readNextMetablockHeader s =
     if s.flags.inputEnd then
-        Ok
-            { s
-                | nextRunningState = 10
-                , runningState = 13
-            }
+        Ok ( 13, 10, s )
 
     else
         let
@@ -372,7 +368,7 @@ readNextMetablockHeader s =
             |> Result.andThen
                 (\s4 ->
                     if s4.metaBlockLength == 0 && s4.flags.isMetadata == False then
-                        Ok s4
+                        Ok ( s4.runningState, s4.nextRunningState, s4 )
 
                     else
                         let
@@ -399,9 +395,10 @@ readNextMetablockHeader s =
                             Err e ->
                                 Err e
 
-                            Ok ( s6, nextRunningState ) ->
+                            Ok ( s6, newRunningState ) ->
                                 if s6.flags.isMetadata then
-                                    Ok (updateRunningState nextRunningState s6)
+                                    -- Ok (updateRunningState newRunningState s6)
+                                    Ok ( newRunningState, s6.nextRunningState, s6 )
 
                                 else
                                     let
@@ -411,13 +408,13 @@ readNextMetablockHeader s =
                                     if s6.ringBufferSize < s6.maxRingBufferSize then
                                         case maybeReallocateRingBuffer newExpectedTotalSize s6 of
                                             Nothing ->
-                                                Ok { s6 | expectedTotalSize = newExpectedTotalSize, runningState = nextRunningState }
+                                                Ok ( newRunningState, s6.nextRunningState, { s6 | expectedTotalSize = newExpectedTotalSize } )
 
                                             Just { ringBuffer, ringBufferSize } ->
-                                                Ok { s6 | ringBuffer = ringBuffer, ringBufferSize = ringBufferSize, expectedTotalSize = newExpectedTotalSize, runningState = nextRunningState }
+                                                Ok ( newRunningState, s6.nextRunningState, { s6 | ringBuffer = ringBuffer, ringBufferSize = ringBufferSize, expectedTotalSize = newExpectedTotalSize } )
 
                                     else
-                                        Ok { s6 | expectedTotalSize = newExpectedTotalSize, runningState = nextRunningState }
+                                        Ok ( newRunningState, s6.nextRunningState, { s6 | expectedTotalSize = newExpectedTotalSize } )
                 )
 
 
@@ -1977,13 +1974,14 @@ decompressHelp context written ( _, _, s ) =
                     Err e ->
                         Err e
 
-                    Ok s2 ->
+                    Ok ( newRunningState, newNextRunningState, s2 ) ->
                         let
                             fence =
                                 calculateFence s2
                         in
-                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( s2.runningState, s2.nextRunningState, s2 )
+                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( newRunningState, newNextRunningState, { s2 | runningState = newRunningState, nextRunningState = newNextRunningState } )
 
+        -- decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( s2.runningState, s2.nextRunningState, s2 )
         3 ->
             case readMetablockHuffmanCodesAndContextMaps s of
                 Err e ->
