@@ -1855,8 +1855,8 @@ calculateDistanceLut alphabetSizeLimit state =
         |> go2 1 0
 
 
-decompress : Written -> State -> Result Error ( Bytes, State, Written )
-decompress written unvalidated =
+decompress : Written -> ( Int, Int, State ) -> Result Error ( Bytes, ( Int, Int, State ), Written )
+decompress written ( runningState, nextRunningState, unvalidated ) =
     if unvalidated.runningState == 0 then
         Err (CustomError "Can't decompreunvalidateds until initialized")
 
@@ -1893,7 +1893,7 @@ decompress written unvalidated =
                     , ringBufferMask = s2.ringBufferSize - 1
                     }
                     written
-                    s2
+                    ( runningState, nextRunningState, s2 )
         in
         case s |> Result.andThen work of
             Err e ->
@@ -1957,8 +1957,8 @@ type alias Written =
     }
 
 
-decompressHelp : Context -> Written -> State -> Result Error ( State, Context, Written )
-decompressHelp context written s =
+decompressHelp : Context -> Written -> ( Int, Int, State ) -> Result Error ( ( Int, Int, State ), Context, Written )
+decompressHelp context written ( _, _, s ) =
     let
         _ =
             -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
@@ -1966,7 +1966,7 @@ decompressHelp context written s =
     in
     case s.runningState of
         10 ->
-            Ok ( s, context, written )
+            Ok ( ( s.runningState, s.nextRunningState, s ), context, written )
 
         2 ->
             if s.metaBlockLength < 0 then
@@ -1982,7 +1982,7 @@ decompressHelp context written s =
                             fence =
                                 calculateFence s2
                         in
-                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written s2
+                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( s2.runningState, s2.nextRunningState, s2 )
 
         3 ->
             case readMetablockHuffmanCodesAndContextMaps s of
@@ -1990,7 +1990,7 @@ decompressHelp context written s =
                     Err e
 
                 Ok s2 ->
-                    decompressHelp context written (updateRunningState 4 s2)
+                    decompressHelp context written ( 4, s2.nextRunningState, updateRunningState 4 s2 )
 
         4 ->
             case evaluateState4 s of
@@ -1998,7 +1998,7 @@ decompressHelp context written s =
                     Err e
 
                 Ok newState ->
-                    decompressHelp context written newState
+                    decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
 
         7 ->
             if s.isTrivialLiteralContext then
@@ -2053,7 +2053,7 @@ decompressHelp context written s =
                         Err e
 
                     Ok newState ->
-                        decompressHelp context written newState
+                        decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
 
             else
                 let
@@ -2070,10 +2070,14 @@ decompressHelp context written s =
                         Err e
 
                     Ok newState ->
-                        decompressHelp context written newState
+                        decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
 
         8 ->
-            decompressHelp context written (evaluateState8 context s)
+            let
+                newState =
+                    evaluateState8 context s
+            in
+            decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
 
         9 ->
             if s.distance > 0x7FFFFFFC then
@@ -2111,10 +2115,18 @@ decompressHelp context written s =
                             s.pos + len
                     in
                     if newPos >= context.fence then
-                        decompressHelp context written (updateEvaluateState9 4 13 newRingBuffer (s.pos + len) newMetaBlockLength s)
+                        let
+                            newState =
+                                updateEvaluateState9 4 13 newRingBuffer (s.pos + len) newMetaBlockLength s
+                        in
+                        decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
 
                     else
-                        decompressHelp context written (updateEvaluateState9 s.nextRunningState 4 newRingBuffer (s.pos + len) newMetaBlockLength s)
+                        let
+                            newState =
+                                updateEvaluateState9 s.nextRunningState 4 newRingBuffer (s.pos + len) newMetaBlockLength s
+                        in
+                        decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
 
                 else
                     Err (InvalidBackwardReference ("the transform index is " ++ String.fromInt transformIdx ++ ", but it must be smaller than 121"))
@@ -2123,12 +2135,20 @@ decompressHelp context written s =
                 Err (InvalidBackwardReference ("CopyLength must be 4 >= copyLength <= 24, but it is " ++ String.fromInt s.copyLength))
 
         6 ->
-            copyUncompressedData s
-                |> Result.andThen (decompressHelp context written)
+            case copyUncompressedData s of
+                Err e ->
+                    Err e
+
+                Ok newState ->
+                    decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
 
         12 ->
             -- should not happen, go directly to state 13
-            decompressHelp context written s
+            let
+                newState =
+                    s
+            in
+            decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
 
         13 ->
             let
@@ -2136,7 +2156,7 @@ decompressHelp context written s =
                     writeRingBuffer (min s.pos s.ringBufferSize) written s
             in
             if not wasWritten then
-                Ok ( s, context, newWritten )
+                Ok ( ( s.runningState, s.nextRunningState, s ), context, newWritten )
 
             else
                 let
@@ -2151,26 +2171,29 @@ decompressHelp context written s =
                     let
                         newRingBuffer =
                             Array.Helpers.copyWithin 0 s.ringBufferSize s.pos s.ringBuffer
+
+                        newState =
+                            { s
+                                | pos = Bitwise.and s.pos context.ringBufferMask
+                                , runningState = s.nextRunningState
+                                , ringBuffer = newRingBuffer
+                                , maxDistance = newMaxDistance
+                            }
+
+                        newerWritten =
+                            { fromRingBuffer = 0, toOutput = newWritten.toOutput, output = newWritten.output }
                     in
-                    decompressHelp context
-                        { fromRingBuffer = 0, toOutput = newWritten.toOutput, output = newWritten.output }
-                        { s
-                            | pos = Bitwise.and s.pos context.ringBufferMask
-                            , runningState = s.nextRunningState
-                            , ringBuffer = newRingBuffer
-                            , maxDistance = newMaxDistance
-                        }
+                    decompressHelp context newerWritten ( newState.runningState, newState.nextRunningState, newState )
 
                 else
-                    decompressHelp context
-                        newWritten
-                        { s
-                            | runningState = s.nextRunningState
-                            , maxDistance = newMaxDistance
-                        }
+                    let
+                        newState =
+                            { s | runningState = s.nextRunningState, maxDistance = newMaxDistance }
+                    in
+                    decompressHelp context newWritten ( newState.runningState, newState.nextRunningState, newState )
 
         _ ->
-            Ok ( s, context, written )
+            Ok ( ( s.runningState, s.nextRunningState, s ), context, written )
 
 
 evaluateState4 : State -> Result Error State
@@ -3204,23 +3227,23 @@ decode input =
 
         Ok s ->
             let
-                decodeLoop written state chunks =
+                decodeLoop runningState nextRunningState written state chunks =
                     let
                         newWritten =
                             { toOutput = 0, fromRingBuffer = written.fromRingBuffer, output = [] }
                     in
-                    case decompress newWritten state of
+                    case decompress newWritten ( runningState, nextRunningState, state ) of
                         Err e ->
                             Err e
 
-                        Ok ( buffer, newState, newerWritten ) ->
+                        Ok ( buffer, ( newRunningState, newNextRunningState, newState ), newerWritten ) ->
                             if Bytes.width buffer < 16384 then
                                 Ok (List.reverse (Encode.bytes buffer :: chunks))
 
                             else
-                                decodeLoop newerWritten newState (Encode.bytes buffer :: chunks)
+                                decodeLoop newRunningState newNextRunningState newerWritten newState (Encode.bytes buffer :: chunks)
             in
-            case decodeLoop { toOutput = 0, fromRingBuffer = 0, output = [] } s [] of
+            case decodeLoop s.runningState s.nextRunningState { toOutput = 0, fromRingBuffer = 0, output = [] } s [] of
                 Err e ->
                     Err e
 
