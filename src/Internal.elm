@@ -1,4 +1,4 @@
-module Internal exposing (Error(..), buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, encodeByteList, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, sortSymbols, topUpAccumulator)
+module Internal exposing (Error(..), buildHuffmanTable, calculateDistanceAlphabetSize, calculateDistanceLut, decode, decompress, generateCount, generateOffsets, nextTableBitSize, phase1, readComplexHuffmanCodeHelp, readFewBits, sortSymbols, topUpAccumulator)
 
 import Array exposing (Array)
 import Array.Helpers
@@ -195,24 +195,26 @@ defaultState buffer =
     }
 
 
-initState : State -> Result Error State
+initState : State -> Result Error ( Int, Int, State )
 initState s =
-    if s.runningState /= 0 then
-        Err StateNotInitialized
+    {-
+       if s.runningState /= 0 then
+           Err StateNotInitialized
 
-    else
-        calculateDistanceAlphabetLimit 0x7FFFFFFC 3 (Bitwise.shiftLeftBy 3 15)
-            |> Result.map
-                (\maxDistanceAlphabetLimit ->
-                    { s
-                        | blockTrees = Array.append (Array.fromList [ 7 ]) (Array.repeat 3090 0)
-                        , distRbIdx = 3
-                        , distExtraBits = Array.repeat maxDistanceAlphabetLimit 0
-                        , distOffset = Array.repeat maxDistanceAlphabetLimit 0
-                    }
-                )
-            |> Result.andThen initBitReader
-            |> Result.map (updateRunningState 1)
+       else
+    -}
+    calculateDistanceAlphabetLimit 0x7FFFFFFC 3 (Bitwise.shiftLeftBy 3 15)
+        |> Result.map
+            (\maxDistanceAlphabetLimit ->
+                { s
+                    | blockTrees = Array.append (Array.fromList [ 7 ]) (Array.repeat 3090 0)
+                    , distRbIdx = 3
+                    , distExtraBits = Array.repeat maxDistanceAlphabetLimit 0
+                    , distOffset = Array.repeat maxDistanceAlphabetLimit 0
+                }
+            )
+        |> Result.andThen initBitReader
+        |> Result.map (\st -> ( 1, s.nextRunningState, updateRunningState 1 st ))
 
 
 calculateDistanceAlphabetSize : Int -> Int -> Int -> Int
@@ -347,8 +349,8 @@ type alias InputStream =
     }
 
 
-readNextMetablockHeader : State -> Result Error ( Int, Int, State )
-readNextMetablockHeader s =
+readNextMetablockHeader : ( Int, Int, State ) -> Result Error ( Int, Int, State )
+readNextMetablockHeader ( runningState, nextRunningState, s ) =
     if s.flags.inputEnd then
         Ok ( 13, 10, s )
 
@@ -368,7 +370,7 @@ readNextMetablockHeader s =
             |> Result.andThen
                 (\s4 ->
                     if s4.metaBlockLength == 0 && s4.flags.isMetadata == False then
-                        Ok ( s4.runningState, s4.nextRunningState, s4 )
+                        Ok ( runningState, nextRunningState, s4 )
 
                     else
                         let
@@ -1852,47 +1854,38 @@ calculateDistanceLut alphabetSizeLimit state =
         |> go2 1 0
 
 
+evaluateState1 : ( Int, Int, State ) -> Result Error ( Int, Int, State )
+evaluateState1 ( runningState, nextRunningState, s ) =
+    case decodeWindowBits s of
+        ( newS, windowBits ) ->
+            if windowBits == -1 then
+                Err InvalidWindowBits
+
+            else
+                Ok
+                    ( 2
+                    , nextRunningState
+                    , { newS
+                        | maxRingBufferSize = Bitwise.shiftLeftBy windowBits 1
+                        , maxBackwardDistance = Bitwise.shiftLeftBy windowBits 1 - 16
+                        , runningState = 2
+                      }
+                    )
+
+
 decompress : Written -> ( Int, Int, State ) -> Result Error ( Bytes, ( Int, Int, State ), Written )
-decompress written ( runningState, nextRunningState, unvalidated ) =
-    if unvalidated.runningState == 0 then
+decompress written ( runningState, nextRunningState, s ) =
+    if runningState == 0 then
         Err (CustomError "Can't decompreunvalidateds until initialized")
 
-    else if unvalidated.runningState == 11 then
+    else if runningState == 11 then
         Err (CustomError "Can't decompress after close")
 
+    else if runningState == 1 then
+        Err (CustomError "use evaluateState1 first")
+
     else
-        let
-            s =
-                if unvalidated.runningState == 1 then
-                    case decodeWindowBits unvalidated of
-                        ( newS, windowBits ) ->
-                            if windowBits == -1 then
-                                Err InvalidWindowBits
-
-                            else
-                                Ok
-                                    { newS
-                                        | maxRingBufferSize = Bitwise.shiftLeftBy windowBits 1
-                                        , maxBackwardDistance = Bitwise.shiftLeftBy windowBits 1 - 16
-                                        , runningState = 2
-                                    }
-
-                else
-                    Ok unvalidated
-
-            work s2 =
-                let
-                    fence =
-                        calculateFence s2
-                in
-                decompressHelp
-                    { fence = fence
-                    , ringBufferMask = s2.ringBufferSize - 1
-                    }
-                    written
-                    ( runningState, nextRunningState, s2 )
-        in
-        case s |> Result.andThen work of
+        case decompressHelp { fence = calculateFence s, ringBufferMask = s.ringBufferSize - 1 } written ( runningState, nextRunningState, s ) of
             Err e ->
                 Err e
 
@@ -1905,40 +1898,6 @@ decompress written ( runningState, nextRunningState, unvalidated ) =
                     , r
                     , newWritten
                     )
-
-
-encodeByteList : List Int -> List Encode.Encoder -> List Encode.Encoder
-encodeByteList remaining encoders =
-    {- NOTE the values can in practice use more than the first 8 bits, so we have to mask them -}
-    case remaining of
-        [] ->
-            encoders
-
-        [ x ] ->
-            Encode.unsignedInt8 x :: encoders
-
-        [ x, y ] ->
-            let
-                value =
-                    Bitwise.or (Bitwise.shiftLeftBy 8 x) (Bitwise.and 0xFF y)
-            in
-            Encode.unsignedInt16 BE value :: encoders
-
-        [ x, y, z ] ->
-            let
-                value =
-                    Bitwise.or (Bitwise.shiftLeftBy 8 x) (Bitwise.and 0xFF y)
-            in
-            Encode.unsignedInt8 z :: Encode.unsignedInt16 BE value :: encoders
-
-        x :: y :: z :: w :: rest ->
-            let
-                value =
-                    Bitwise.or
-                        (Bitwise.or (Bitwise.shiftLeftBy 24 x) (Bitwise.shiftLeftBy 16 (Bitwise.and 0xFF y)))
-                        (Bitwise.or (Bitwise.shiftLeftBy 8 (Bitwise.and 0xFF z)) (Bitwise.and 0xFF w))
-            in
-            encodeByteList rest (Encode.unsignedInt32 BE value :: encoders)
 
 
 type alias Context =
@@ -1970,7 +1929,7 @@ decompressHelp context written ( _, _, s ) =
                 Err InvalidMetablockLength
 
             else
-                case readNextMetablockHeader s of
+                case readNextMetablockHeader ( s.runningState, s.nextRunningState, s ) of
                     Err e ->
                         Err e
 
@@ -1981,7 +1940,6 @@ decompressHelp context written ( _, _, s ) =
                         in
                         decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( newRunningState, newNextRunningState, { s2 | runningState = newRunningState, nextRunningState = newNextRunningState } )
 
-        -- decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( s2.runningState, s2.nextRunningState, s2 )
         3 ->
             case readMetablockHuffmanCodesAndContextMaps s of
                 Err e ->
@@ -3219,11 +3177,11 @@ readInput offset length s =
 
 decode : Bytes -> Result Error Bytes
 decode input =
-    case initState (defaultState input) of
+    case initState (defaultState input) |> Result.andThen evaluateState1 of
         Err e ->
             Err e
 
-        Ok s ->
+        Ok ( initialRunningState, initialNextRunningState, s ) ->
             let
                 decodeLoop runningState nextRunningState written state chunks =
                     let
@@ -3241,7 +3199,7 @@ decode input =
                             else
                                 decodeLoop newRunningState newNextRunningState newerWritten newState (Encode.bytes buffer :: chunks)
             in
-            case decodeLoop s.runningState s.nextRunningState { toOutput = 0, fromRingBuffer = 0, output = [] } s [] of
+            case decodeLoop initialRunningState initialNextRunningState { toOutput = 0, fromRingBuffer = 0, output = [] } s [] of
                 Err e ->
                     Err e
 
