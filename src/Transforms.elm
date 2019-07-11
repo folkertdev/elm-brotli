@@ -135,6 +135,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
 
                     Just value ->
                         prefixSuffixLoop (currentSuffix + 1) fixEnd (currentOffset + 1) (RingBuffer.set currentOffset value accum)
+                -- prefixSuffixLoop (currentSuffix + 1) fixEnd (currentOffset + 1) (RingBuffer.push value accum)
 
             else
                 ( currentOffset, accum )
@@ -211,6 +212,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
         go1 i currentOffset currentSourceOffset accum =
             if i > 0 then
                 go1 (i - 1) (currentOffset + 1) (currentSourceOffset + 1) (RingBuffer.set currentOffset (Array.Helpers.unsafeGet currentSourceOffset src) accum)
+                -- go1 (i - 1) (currentOffset + 1) (currentSourceOffset + 1) (RingBuffer.push (Array.Helpers.unsafeGet currentSourceOffset src) accum)
 
             else
                 ( currentOffset, accum )
@@ -243,6 +245,8 @@ transform20Helper c0 scalar len shiftOffset dst =
     if c0 < 0x80 then
         { scalar = scalar + c0
         , step = 1
+
+        -- , dst = RingBuffer.set shiftOffset (Bitwise.and scalar 0x7F) dst
         , dst = RingBuffer.set shiftOffset (Bitwise.and scalar 0x7F) dst
         }
 

@@ -1843,7 +1843,7 @@ decompress written ( runningState, nextRunningState, s ) =
         Err (CustomError "use evaluateState1 first")
 
     else
-        case decompressHelp { fence = calculateFence s, ringBufferMask = RingBuffer.size s.ringBuffer - 1 } written runningState nextRunningState s of
+        case decompressHelp { fence = calculateFence written s, ringBufferMask = RingBuffer.size s.ringBuffer - 1 } written runningState nextRunningState s of
             Err e ->
                 Err e
 
@@ -1895,7 +1895,7 @@ decompressHelp context written runningState nextRunningState s =
                     Ok ( newRunningState, newNextRunningState, s2 ) ->
                         let
                             fence =
-                                calculateFence s2
+                                calculateFence written s2
                         in
                         decompressHelp { fence = fence, ringBufferMask = RingBuffer.size s2.ringBuffer - 1 } written newRunningState newNextRunningState s2
 
@@ -1929,7 +1929,8 @@ decompressHelp context written runningState nextRunningState s =
                                         ( newBitOffset, value ) ->
                                             let
                                                 newRingBuffer =
-                                                    RingBuffer.set s1.pos value s1.ringBuffer
+                                                    -- RingBuffer.set s1.pos value s1.ringBuffer
+                                                    RingBuffer.push value s1.ringBuffer
 
                                                 newPos =
                                                     s1.pos + 1
@@ -2084,9 +2085,12 @@ decompressHelp context written runningState nextRunningState s =
                 in
                 if s.pos >= RingBuffer.size s.ringBuffer then
                     let
-                        newRingBuffer =
+                        newRingBuffer_ =
                             -- wth is going on here?
                             RingBuffer.copyWithin 0 (RingBuffer.size s.ringBuffer) s.pos s.ringBuffer
+
+                        newRingBuffer =
+                            RingBuffer.reslice (Bitwise.and s.pos context.ringBufferMask) newRingBuffer_
 
                         newState =
                             { s
@@ -2312,7 +2316,8 @@ evaluateState7 context prevByte1 prevByte2 runningState nextRunningState s0 =
                     ( newBitOffset, byte1 ) ->
                         let
                             newRingBuffer =
-                                RingBuffer.set s2.pos byte1 s2.ringBuffer
+                                -- RingBuffer.set s2.pos byte1 s2.ringBuffer
+                                RingBuffer.push byte1 s2.ringBuffer
 
                             newPos =
                                 s2.pos + 1
@@ -2381,7 +2386,10 @@ evaluateState8 context ( runningState, nextRunningState, s ) =
             go distance state =
                 let
                     s1 =
-                        { ringBuffer = state.ringBuffer |> RingBuffer.set state.pos (RingBuffer.get (Bitwise.and (state.pos - distance) context.ringBufferMask) state.ringBuffer)
+                        { ringBuffer =
+                            state.ringBuffer
+                                -- |> RingBuffer.set state.pos (RingBuffer.get (Bitwise.and (state.pos - distance) context.ringBufferMask) state.ringBuffer)
+                                |> RingBuffer.push (RingBuffer.get (Bitwise.and (state.pos - distance) context.ringBufferMask) state.ringBuffer)
                         , metaBlockLength = state.metaBlockLength - 1
                         , pos = state.pos + 1
                         , j = state.j + 1
@@ -2460,7 +2468,8 @@ copyBytesToRingBuffer offset length data s =
         let
             loop1 state bitOffset currentOffset currentLength accum =
                 if bitOffset /= 32 && currentLength /= 0 then
-                    loop1 state (bitOffset + 8) (currentOffset + 1) (currentLength - 1) (RingBuffer.set currentOffset (Bitwise.shiftRightZfBy bitOffset state.accumulator32) accum)
+                    -- loop1 state (bitOffset + 8) (currentOffset + 1) (currentLength - 1) (RingBuffer.set currentOffset (Bitwise.shiftRightZfBy bitOffset state.accumulator32) accum)
+                    loop1 state (bitOffset + 8) (currentOffset + 1) (currentLength - 1) (RingBuffer.push (Bitwise.shiftRightZfBy bitOffset state.accumulator32) accum)
 
                 else
                     ( updateBitOffset bitOffset state, ( currentOffset, currentLength ), accum )
@@ -2500,7 +2509,8 @@ copyBytesToRingBuffer offset length data s =
                                 (updateBitOffset (state.bitOffset + 8) state)
                                 (currentOffset + 1)
                                 (currentLength - 1)
-                                (RingBuffer.set currentOffset (Bitwise.shiftRightZfBy state.bitOffset state.accumulator32) accum)
+                                -- (RingBuffer.set currentOffset (Bitwise.shiftRightZfBy state.bitOffset state.accumulator32) accum)
+                                (RingBuffer.push (Bitwise.shiftRightZfBy state.bitOffset state.accumulator32) accum)
 
                         else
                             ( state, accum )
@@ -2873,15 +2883,21 @@ decodeBlockTypeAndLength treeType numBlockTypes s0 =
     )
 
 
-calculateFence : State -> Int
-calculateFence s =
+calculateFence : Written -> State -> Int
+calculateFence written s =
+    -- RingBuffer.size s.ringBuffer
+    let
+        result =
+            RingBuffer.size s.ringBuffer
+    in
     {-
-       if s.flags.isEager then
-           min result (written.fromRingBuffer + Constants.outputLength - written.toOutput)
+       -- RingBuffer.size s.ringBuffer
+          if s.flags.isEager then
+              min result (written.fromRingBuffer + Constants.outputLength - written.toOutput)
 
-       else
+          else
     -}
-    RingBuffer.size s.ringBuffer
+    min result (written.fromRingBuffer + Constants.outputLength - written.toOutput)
 
 
 halfAvailable : State -> Int
