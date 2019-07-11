@@ -113,6 +113,21 @@ wholePipeline =
             \_ ->
                 Constants.lookup
                     |> Expect.equal lookup_table_expected
+
+        {-
+           , only <|
+               fuzz (Fuzz.tuple ( Fuzz.intRange 0 99, Fuzz.intRange 0 99 )) "copyWithin changes nothing to a repeated value" <|
+                   \( a, b ) ->
+                       let
+                           ( x, y ) =
+                               ( min a b, max a b )
+
+                           data =
+                               Array.repeat 100 42
+                       in
+                       Array.Helpers.copyWithin (max a b) x y data
+                           |> Expect.equal data
+        -}
         ]
 
 

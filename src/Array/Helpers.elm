@@ -128,27 +128,81 @@ decodeArrayHelp decoder ( remaining, accum ) =
 <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/copyWithin>
 -}
 copyWithin : Int -> Int -> Int -> Array a -> Array a
-copyWithin destination sourceStart sourceEnd arr =
-    {- If the source and target area don't overlap, we can slice it out and append it back in. That is faster.
+copyWithin target start end array =
+    let
+        len =
+            Array.length array
+                |> Bitwise.shiftRightZfBy 0
 
-    -}
-    if destination >= sourceStart && destination < sourceEnd then
-        setSlice (Array.slice sourceStart sourceEnd arr) destination arr
+        relativeTarget =
+            target
+                |> Bitwise.shiftRightBy 0
 
-    else if sourceStart == sourceEnd then
-        arr
+        to =
+            if relativeTarget < 0 then
+                max (len + relativeTarget) 0
+
+            else
+                min relativeTarget len
+
+        relativeStart =
+            start
+                |> Bitwise.shiftRightBy 0
+
+        from =
+            if relativeStart < 0 then
+                max (len + relativeStart) 0
+
+            else
+                min relativeStart len
+
+        relativeEnd =
+            end
+                |> Bitwise.shiftRightBy 0
+
+        final =
+            if relativeEnd < 0 then
+                max (len + relativeEnd) 0
+
+            else
+                min relativeEnd len
+
+        count =
+            min (final - from) (len - to)
+    in
+    if count == 0 then
+        array
 
     else
-        let
-            newArray =
-                case Array.get sourceStart arr of
-                    Nothing ->
-                        arr
+        copyWithinHelp from to count array
 
-                    Just v ->
-                        Array.set destination v arr
-        in
-        copyWithin (destination + 1) (sourceStart + 1) sourceEnd newArray
+
+copyWithinHelp from_ to_ count array =
+    let
+        ( direction, from, to ) =
+            if from_ < to_ && to_ < (from_ + count) then
+                ( -1, from_ + count - 1, to_ + count - 1 )
+
+            else
+                ( 1, from_, to_ )
+    in
+    copyWithinLoop count from to direction array
+
+
+copyWithinLoop : Int -> Int -> Int -> Int -> Array a -> Array a
+copyWithinLoop count from to direction array =
+    -- benchmarks show that unfolding the loop is a little faster
+    -- e.g. updating 4 or 8 elements at once, that saves a jump
+    if count > 0 then
+        case Array.get from array of
+            Nothing ->
+                copyWithinLoop (count - 1) (from + direction) (to + direction) direction array
+
+            Just value ->
+                copyWithinLoop (count - 1) (from + direction) (to + direction) direction (Array.set to value array)
+
+    else
+        array
 
 
 unsafeGet : Int -> Array Int -> Int

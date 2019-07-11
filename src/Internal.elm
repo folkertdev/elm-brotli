@@ -1959,7 +1959,11 @@ type alias Written =
 
 decompressHelp : Context -> Written -> State -> Result Error ( State, Context, Written )
 decompressHelp context written s =
-    -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+    let
+        _ =
+            -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+            ()
+    in
     case s.runningState of
         10 ->
             Ok ( s, context, written )
@@ -3076,9 +3080,12 @@ doReadMoreInput s =
 
             bytesInBuffer =
                 4096 - readOffset
+
+            byteBuffer =
+                Array.Helpers.copyWithin 0 readOffset 4096 s.byteBuffer
         in
         -- @optimize replace record update?
-        case doReadMoreInputHelp bytesInBuffer { s | byteBuffer = Array.Helpers.copyWithin 0 readOffset 4096 s.byteBuffer, halfOffset = 0 } of
+        case doReadMoreInputHelp bytesInBuffer { s | byteBuffer = byteBuffer, halfOffset = 0 } of
             Err e ->
                 Err e
 
