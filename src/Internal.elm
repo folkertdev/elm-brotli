@@ -65,13 +65,10 @@ type alias State =
     , distExtraBits : Array Int
     , byteBuffer : Array Int
     , shortBuffer : Array Int
-    , intBuffer : Array Int
     , rings : Array Int
     , blockTrees : Array Int
     , treeGroup : TreeGroup
     , distOffset : Array Int
-    , runningState : Int
-    , nextRunningState : Int
     , accumulator32 : Int
     , bitOffset : Int
     , halfOffset : Int
@@ -142,7 +139,6 @@ defaultState buffer =
     , distExtraBits = Array.empty
     , byteBuffer = Array.empty
     , shortBuffer = Array.empty
-    , intBuffer = Array.empty
     , rings = Array.fromList [ 16, 15, 11, 4, 0, 0, 0, 0, 0, 0 ]
     , blockTrees = Array.empty
     , treeGroup =
@@ -151,8 +147,6 @@ defaultState buffer =
         , distanceTreeGroup = Array.empty
         }
     , distOffset = Array.empty
-    , runningState = 0
-    , nextRunningState = 0
     , accumulator32 = 0
     , bitOffset = 0
     , halfOffset = 0
@@ -214,7 +208,7 @@ initState s =
                 }
             )
         |> Result.andThen initBitReader
-        |> Result.map (\st -> ( 1, s.nextRunningState, updateRunningState 1 st ))
+        |> Result.map (\st -> ( 1, 0, st ))
 
 
 calculateDistanceAlphabetSize : Int -> Int -> Int -> Int
@@ -399,8 +393,7 @@ readNextMetablockHeader ( runningState, nextRunningState, s ) =
 
                             Ok ( s6, newRunningState ) ->
                                 if s6.flags.isMetadata then
-                                    -- Ok (updateRunningState newRunningState s6)
-                                    Ok ( newRunningState, s6.nextRunningState, s6 )
+                                    Ok ( newRunningState, nextRunningState, s6 )
 
                                 else
                                     let
@@ -410,13 +403,13 @@ readNextMetablockHeader ( runningState, nextRunningState, s ) =
                                     if s6.ringBufferSize < s6.maxRingBufferSize then
                                         case maybeReallocateRingBuffer newExpectedTotalSize s6 of
                                             Nothing ->
-                                                Ok ( newRunningState, s6.nextRunningState, { s6 | expectedTotalSize = newExpectedTotalSize } )
+                                                Ok ( newRunningState, nextRunningState, { s6 | expectedTotalSize = newExpectedTotalSize } )
 
                                             Just { ringBuffer, ringBufferSize } ->
-                                                Ok ( newRunningState, s6.nextRunningState, { s6 | ringBuffer = ringBuffer, ringBufferSize = ringBufferSize, expectedTotalSize = newExpectedTotalSize } )
+                                                Ok ( newRunningState, nextRunningState, { s6 | ringBuffer = ringBuffer, ringBufferSize = ringBufferSize, expectedTotalSize = newExpectedTotalSize } )
 
                                     else
-                                        Ok ( newRunningState, s6.nextRunningState, { s6 | expectedTotalSize = newExpectedTotalSize } )
+                                        Ok ( newRunningState, nextRunningState, { s6 | expectedTotalSize = newExpectedTotalSize } )
                 )
 
 
@@ -1868,7 +1861,6 @@ evaluateState1 ( runningState, nextRunningState, s ) =
                     , { newS
                         | maxRingBufferSize = Bitwise.shiftLeftBy windowBits 1
                         , maxBackwardDistance = Bitwise.shiftLeftBy windowBits 1 - 16
-                        , runningState = 2
                       }
                     )
 
@@ -1890,14 +1882,14 @@ decompress written ( runningState, nextRunningState, s ) =
                 Err e
 
             Ok ( r, _, newWritten ) ->
-                Ok
-                    ( newWritten.output
-                        |> List.reverse
-                        |> Encode.sequence
-                        |> Encode.encode
-                    , r
-                    , newWritten
-                    )
+                let
+                    asBytes =
+                        newWritten.output
+                            |> List.reverse
+                            |> Encode.sequence
+                            |> Encode.encode
+                in
+                Ok ( asBytes, r, newWritten )
 
 
 type alias Context =
@@ -1914,22 +1906,22 @@ type alias Written =
 
 
 decompressHelp : Context -> Written -> ( Int, Int, State ) -> Result Error ( ( Int, Int, State ), Context, Written )
-decompressHelp context written ( _, _, s ) =
+decompressHelp context written ( runningState, nextRunningState, s ) =
     let
         _ =
             -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
             ()
     in
-    case s.runningState of
+    case runningState of
         10 ->
-            Ok ( ( s.runningState, s.nextRunningState, s ), context, written )
+            Ok ( ( runningState, nextRunningState, s ), context, written )
 
         2 ->
             if s.metaBlockLength < 0 then
                 Err InvalidMetablockLength
 
             else
-                case readNextMetablockHeader ( s.runningState, s.nextRunningState, s ) of
+                case readNextMetablockHeader ( runningState, nextRunningState, s ) of
                     Err e ->
                         Err e
 
@@ -1938,7 +1930,7 @@ decompressHelp context written ( _, _, s ) =
                             fence =
                                 calculateFence s2
                         in
-                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( newRunningState, newNextRunningState, { s2 | runningState = newRunningState, nextRunningState = newNextRunningState } )
+                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( newRunningState, newNextRunningState, s2 )
 
         3 ->
             case readMetablockHuffmanCodesAndContextMaps s of
@@ -1946,15 +1938,15 @@ decompressHelp context written ( _, _, s ) =
                     Err e
 
                 Ok s2 ->
-                    decompressHelp context written ( 4, s2.nextRunningState, updateRunningState 4 s2 )
+                    decompressHelp context written ( 4, nextRunningState, s2 )
 
         4 ->
-            case evaluateState4 s of
+            case evaluateState4 ( runningState, nextRunningState, s ) of
                 Err e ->
                     Err e
 
-                Ok newState ->
-                    decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
+                Ok ( newRunningState, newNextRunningState, newState ) ->
+                    decompressHelp context written ( newRunningState, newNextRunningState, newState )
 
         7 ->
             if s.isTrivialLiteralContext then
@@ -1986,7 +1978,7 @@ decompressHelp context written ( _, _, s ) =
                                                         , distanceBlockLength = oldBlockLengths.distanceBlockLength
                                                         }
                                                 in
-                                                Ok { s1 | nextRunningState = 7, runningState = 13, bitOffset = newBitOffset, pos = s1.pos + 1, j = s1.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths }
+                                                Ok ( 13, 7, { s1 | bitOffset = newBitOffset, pos = s1.pos + 1, j = s1.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths } )
 
                                             else
                                                 go (copyState7 newBitOffset newPos (s1.j + 1) newRingBuffer (s1.blockLength.literalBlockLength - 1) s1)
@@ -2002,14 +1994,14 @@ decompressHelp context written ( _, _, s ) =
                                     , distanceBlockLength = oldBlockLengths.distanceBlockLength
                                     }
                             in
-                            remainder7 { s0 | blockLength = newBlockLengths }
+                            remainder7 ( runningState, nextRunningState, { s0 | blockLength = newBlockLengths } )
                 in
                 case go s of
                     Err e ->
                         Err e
 
-                    Ok newState ->
-                        decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
+                    Ok ( newRunningState, newNextRunningState, newState ) ->
+                        decompressHelp context written ( newRunningState, newNextRunningState, newState )
 
             else
                 let
@@ -2021,19 +2013,19 @@ decompressHelp context written ( _, _, s ) =
                         Array.Helpers.unsafeGet (Bitwise.and (s.pos - 2) context.ringBufferMask) s.ringBuffer
                             |> Bitwise.and 0xFF
                 in
-                case evaluateState7 context init_prevByte1 init_prevByte2 s of
+                case evaluateState7 context init_prevByte1 init_prevByte2 runningState nextRunningState s of
                     Err e ->
                         Err e
 
-                    Ok newState ->
-                        decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
+                    Ok ( newRunningState, newNextRunningState, newState ) ->
+                        decompressHelp context written ( newRunningState, newNextRunningState, newState )
 
         8 ->
             let
-                newState =
-                    evaluateState8 context s
+                ( newRunningState, newNextRunningState, newState ) =
+                    evaluateState8 context ( runningState, nextRunningState, s )
             in
-            decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
+            decompressHelp context written ( newRunningState, newNextRunningState, newState )
 
         9 ->
             if s.distance > 0x7FFFFFFC then
@@ -2073,16 +2065,16 @@ decompressHelp context written ( _, _, s ) =
                     if newPos >= context.fence then
                         let
                             newState =
-                                updateEvaluateState9 4 13 newRingBuffer (s.pos + len) newMetaBlockLength s
+                                updateEvaluateState9 newRingBuffer (s.pos + len) newMetaBlockLength s
                         in
-                        decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
+                        decompressHelp context written ( 4, 13, newState )
 
                     else
                         let
                             newState =
-                                updateEvaluateState9 s.nextRunningState 4 newRingBuffer (s.pos + len) newMetaBlockLength s
+                                updateEvaluateState9 newRingBuffer (s.pos + len) newMetaBlockLength s
                         in
-                        decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
+                        decompressHelp context written ( 4, nextRunningState, newState )
 
                 else
                     Err (InvalidBackwardReference ("the transform index is " ++ String.fromInt transformIdx ++ ", but it must be smaller than 121"))
@@ -2095,8 +2087,8 @@ decompressHelp context written ( _, _, s ) =
                 Err e ->
                     Err e
 
-                Ok newState ->
-                    decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
+                Ok ( newRunningState, newNextRunningState, newState ) ->
+                    decompressHelp context written ( newRunningState, newNextRunningState, newState )
 
         12 ->
             -- should not happen, go directly to state 13
@@ -2104,7 +2096,7 @@ decompressHelp context written ( _, _, s ) =
                 newState =
                     s
             in
-            decompressHelp context written ( newState.runningState, newState.nextRunningState, newState )
+            decompressHelp context written ( runningState, nextRunningState, newState )
 
         13 ->
             let
@@ -2112,7 +2104,7 @@ decompressHelp context written ( _, _, s ) =
                     writeRingBuffer (min s.pos s.ringBufferSize) written s
             in
             if not wasWritten then
-                Ok ( ( s.runningState, s.nextRunningState, s ), context, newWritten )
+                Ok ( ( runningState, nextRunningState, s ), context, newWritten )
 
             else
                 let
@@ -2131,7 +2123,8 @@ decompressHelp context written ( _, _, s ) =
                         newState =
                             { s
                                 | pos = Bitwise.and s.pos context.ringBufferMask
-                                , runningState = s.nextRunningState
+
+                                -- , runningState = s.nextRunningState
                                 , ringBuffer = newRingBuffer
                                 , maxDistance = newMaxDistance
                             }
@@ -2139,23 +2132,24 @@ decompressHelp context written ( _, _, s ) =
                         newerWritten =
                             { fromRingBuffer = 0, toOutput = newWritten.toOutput, output = newWritten.output }
                     in
-                    decompressHelp context newerWritten ( newState.runningState, newState.nextRunningState, newState )
+                    -- not a type, switches to the next running state
+                    decompressHelp context newerWritten ( nextRunningState, nextRunningState, newState )
 
                 else
                     let
                         newState =
-                            { s | runningState = s.nextRunningState, maxDistance = newMaxDistance }
+                            { s | maxDistance = newMaxDistance }
                     in
-                    decompressHelp context newWritten ( newState.runningState, newState.nextRunningState, newState )
+                    decompressHelp context newWritten ( nextRunningState, nextRunningState, newState )
 
         _ ->
-            Ok ( ( s.runningState, s.nextRunningState, s ), context, written )
+            Ok ( ( runningState, nextRunningState, s ), context, written )
 
 
-evaluateState4 : State -> Result Error State
-evaluateState4 s =
+evaluateState4 : ( Int, Int, State ) -> Result Error ( Int, Int, State )
+evaluateState4 ( runningState, nextRunningState, s ) =
     if s.metaBlockLength <= 0 then
-        Ok { s | runningState = 2 }
+        Ok ( 2, nextRunningState, s )
 
     else
         case maybeReadMoreInput 2030 s of
@@ -2202,9 +2196,10 @@ evaluateState4 s =
                                         readLengths s3
                                 in
                                 Ok
-                                    (updateEvaluateState4
+                                    ( 7
+                                    , nextRunningState
+                                    , updateEvaluateState4
                                         0
-                                        7
                                         (copyLengthBits + copyLengthOffset)
                                         (insertLengthBits + insertLengthOffset)
                                         (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup)
@@ -2222,8 +2217,8 @@ maybeLiteral state =
         state
 
 
-evaluateState7 : Context -> Int -> Int -> State -> Result Error State
-evaluateState7 context prevByte1 prevByte2 s0 =
+evaluateState7 : Context -> Int -> Int -> Int -> Int -> State -> Result Error ( Int, Int, State )
+evaluateState7 context prevByte1 prevByte2 runningState nextRunningState s0 =
     if s0.j < s0.insertLength then
         case maybeReadMoreInput 2030 s0 of
             Err e ->
@@ -2279,17 +2274,17 @@ evaluateState7 context prevByte1 prevByte2 s0 =
                                     , distanceBlockLength = oldBlockLengths.distanceBlockLength
                                     }
                             in
-                            Ok { s2 | nextRunningState = 7, runningState = 13, bitOffset = newBitOffset, pos = newPos, j = s2.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths }
+                            Ok ( 13, 7, { s2 | bitOffset = newBitOffset, pos = newPos, j = s2.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths } )
 
                         else
-                            evaluateState7 context byte1 byte2 (copyState7 newBitOffset newPos (s2.j + 1) newRingBuffer (s2.blockLength.literalBlockLength - 1) s2)
+                            evaluateState7 context byte1 byte2 runningState nextRunningState (copyState7 newBitOffset newPos (s2.j + 1) newRingBuffer (s2.blockLength.literalBlockLength - 1) s2)
 
     else
-        remainder7 s0
+        remainder7 ( runningState, nextRunningState, s0 )
 
 
-evaluateState8 : Context -> State -> State
-evaluateState8 context s =
+evaluateState8 : Context -> ( Int, Int, State ) -> ( Int, Int, State )
+evaluateState8 context ( runningState, nextRunningState, s ) =
     let
         src =
             Bitwise.and (s.pos - s.distance) context.ringBufferMask
@@ -2363,18 +2358,19 @@ evaluateState8 context s =
                 else
                     Array.Helpers.copyWithin dst src srcEnd s.ringBuffer
         in
-        updateEvaluateState8
+        ( if runningState == 8 then
+            4
+
+          else
+            runningState
+        , nextRunningState
+        , updateEvaluateState8
             newRingBuffer
             (s.j + copyLength)
             (s.metaBlockLength - copyLength)
             (s.pos + copyLength)
-            (if s.runningState == 8 then
-                4
-
-             else
-                s.runningState
-            )
             s
+        )
 
     else
         -- NOTE this branch is untested; seems to almost never get hit
@@ -2405,21 +2401,26 @@ evaluateState8 context s =
             newSmallerState =
                 go s.distance smallerState
         in
-        { s
-            | nextRunningState = 8
-            , runningState = 13
-            , ringBuffer = newSmallerState.ringBuffer
+        ( 13
+        , 8
+        , { s
+            | ringBuffer = newSmallerState.ringBuffer
             , metaBlockLength = newSmallerState.metaBlockLength
             , pos = newSmallerState.pos
             , j = newSmallerState.j
-        }
+          }
+        )
 
 
-copyUncompressedData : State -> Result Error State
+copyUncompressedData : State -> Result Error ( Int, Int, State )
 copyUncompressedData s =
     if s.metaBlockLength <= 0 then
-        reload s
-            |> Result.map (\state -> { state | runningState = 2 })
+        case reload s of
+            Err e ->
+                Err e
+
+            Ok state ->
+                Ok ( 2, -42, state )
 
     else
         let
@@ -2436,11 +2437,15 @@ copyUncompressedData s =
                         { s1 | ringBuffer = newRingBuffer, metaBlockLength = s1.metaBlockLength - chunkLength, pos = s1.pos + chunkLength }
                 in
                 if s2.pos == s2.ringBufferSize then
-                    Ok { s2 | nextRunningState = 6, runningState = 13 }
+                    Ok ( 13, 6, s2 )
 
                 else
-                    reload s2
-                        |> Result.map (\state -> { state | runningState = 2 })
+                    case reload s2 of
+                        Err e ->
+                            Err e
+
+                        Ok state ->
+                            Ok ( 2, -42, state )
 
 
 copyBytesToRingBuffer : Int -> Int -> Array Int -> State -> Result Error ( State, Array Int )
@@ -2565,10 +2570,10 @@ writeRingBuffer ringBufferBytesReady written s =
     ( newerWritten.toOutput < Constants.outputLength, newerWritten )
 
 
-remainder7 : State -> Result Error State
-remainder7 s =
-    if s.runningState /= 7 then
-        Ok s
+remainder7 : ( Int, Int, State ) -> Result Error ( Int, Int, State )
+remainder7 ( runningState, nextRunningState, s ) =
+    if runningState /= 7 then
+        Ok ( runningState, nextRunningState, s )
 
     else
         let
@@ -2582,7 +2587,7 @@ remainder7 s =
                 s0
         in
         if newMetaBlockLength <= 0 then
-            Ok { s1 | runningState = 4, metaBlockLength = newMetaBlockLength }
+            Ok ( 4, nextRunningState, { s1 | metaBlockLength = newMetaBlockLength } )
 
         else
             let
@@ -2691,13 +2696,16 @@ remainder7 s =
                     if new.distance > newMaxDistance then
                         -- Ok { s5 | runningState = 9, maxDistance = newMaxDistance, distance = newDistance }
                         Ok
-                            (updateRemainder7
+                            ( 9
+                            , nextRunningState
+                            , updateRemainder7
                                 new.distance
                                 newMaxDistance
                                 new.distanceBlockLength
                                 new.metaBlockLength
-                                s5.nextRunningState
-                                9
+                                -- !!!!!! this was s5.nextRunningState; does step1 change it? it doesn't seem to here
+                                nextRunningState
+                                -- 9
                                 s5.distRbIdx
                                 s5.rings
                                 s5
@@ -2712,13 +2720,15 @@ remainder7 s =
                                 (s5.distRbIdx + 1) |> Bitwise.and 0x03
                         in
                         Ok
-                            (updateRemainder7
+                            ( 8
+                            , nextRunningState
+                            , updateRemainder7
                                 new.distance
                                 newMaxDistance
                                 new.distanceBlockLength
                                 new.metaBlockLength
                                 0
-                                8
+                                --    8
                                 distRbIdx
                                 (Array.set distRbIdx new.distance s5.rings)
                                 s5
@@ -2726,13 +2736,15 @@ remainder7 s =
 
                     else
                         Ok
-                            (updateRemainder7
+                            ( 8
+                            , nextRunningState
+                            , updateRemainder7
                                 new.distance
                                 newMaxDistance
                                 new.distanceBlockLength
                                 new.metaBlockLength
                                 0
-                                8
+                                --   8
                                 s5.distRbIdx
                                 s5.rings
                                 s5
@@ -3219,13 +3231,10 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , distExtraBits = orig.distExtraBits
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
     , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
-    , runningState = orig.runningState
-    , nextRunningState = orig.nextRunningState
     , accumulator32 = newAccumulator32
     , bitOffset = newBitOffset
     , halfOffset = newHalfOffset
@@ -3266,13 +3275,10 @@ updateBitOffset newBitOffset orig =
     , distExtraBits = orig.distExtraBits
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
     , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
-    , runningState = orig.runningState
-    , nextRunningState = orig.nextRunningState
     , accumulator32 = orig.accumulator32
     , bitOffset = newBitOffset
     , halfOffset = orig.halfOffset
@@ -3313,13 +3319,10 @@ copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     , distExtraBits = orig.distExtraBits
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
     , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
-    , runningState = orig.runningState
-    , nextRunningState = orig.nextRunningState
     , accumulator32 = orig.accumulator32
     , bitOffset = bitOffset
     , halfOffset = orig.halfOffset
@@ -3359,8 +3362,8 @@ copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     }
 
 
-updateRemainder7 : Int -> Int -> Int -> Int -> Int -> Int -> Int -> Array Int -> State -> State
-updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runningState distRbIdx rings orig =
+updateRemainder7 : Int -> Int -> Int -> Int -> Int -> Int -> Array Int -> State -> State
+updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j distRbIdx rings orig =
     { ringBuffer = orig.ringBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3368,13 +3371,10 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     , distExtraBits = orig.distExtraBits
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
     , rings = rings
     , blockTrees = orig.blockTrees
     , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
-    , runningState = runningState
-    , nextRunningState = orig.nextRunningState
     , accumulator32 = orig.accumulator32
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
@@ -3414,8 +3414,8 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j runn
     }
 
 
-updateEvaluateState8 : Array Int -> Int -> Int -> Int -> Int -> State -> State
-updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
+updateEvaluateState8 : Array Int -> Int -> Int -> Int -> State -> State
+updateEvaluateState8 ringBuffer j metaBlockLength pos orig =
     { ringBuffer = ringBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3423,13 +3423,10 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     , distExtraBits = orig.distExtraBits
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
     , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
-    , runningState = runningState
-    , nextRunningState = orig.nextRunningState
     , accumulator32 = orig.accumulator32
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
@@ -3461,8 +3458,8 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos runningState orig =
     }
 
 
-updateEvaluateState4 : Int -> Int -> Int -> Int -> Int -> Int -> State -> State
-updateEvaluateState4 j runningState copyLength insertLength distanceCode commandBlockLength orig =
+updateEvaluateState4 : Int -> Int -> Int -> Int -> Int -> State -> State
+updateEvaluateState4 j copyLength insertLength distanceCode commandBlockLength orig =
     { ringBuffer = orig.ringBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3470,13 +3467,10 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     , distExtraBits = orig.distExtraBits
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
     , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
-    , runningState = runningState
-    , nextRunningState = orig.nextRunningState
     , accumulator32 = orig.accumulator32
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
@@ -3516,55 +3510,8 @@ updateEvaluateState4 j runningState copyLength insertLength distanceCode command
     }
 
 
-updateRunningState : Int -> State -> State
-updateRunningState runningState orig =
-    { ringBuffer = orig.ringBuffer
-    , contextModes = orig.contextModes
-    , contextMap = orig.contextMap
-    , distContextMap = orig.distContextMap
-    , distExtraBits = orig.distExtraBits
-    , byteBuffer = orig.byteBuffer
-    , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
-    , rings = orig.rings
-    , blockTrees = orig.blockTrees
-    , treeGroup = orig.treeGroup
-    , distOffset = orig.distOffset
-    , runningState = runningState
-    , nextRunningState = orig.nextRunningState
-    , accumulator32 = orig.accumulator32
-    , bitOffset = orig.bitOffset
-    , halfOffset = orig.halfOffset
-    , tailBytes = orig.tailBytes
-    , metaBlockLength = orig.metaBlockLength
-    , num = orig.num
-    , blockLength = orig.blockLength
-    , pos = orig.pos
-    , maxDistance = orig.maxDistance
-    , distRbIdx = orig.distRbIdx
-    , isTrivialLiteralContext = orig.isTrivialLiteralContext
-    , literalTreeIdx = orig.literalTreeIdx
-    , commandTreeIdx = orig.commandTreeIdx
-    , j = orig.j
-    , insertLength = orig.insertLength
-    , contextMapSlice = orig.contextMapSlice
-    , distContextMapSlice = orig.distContextMapSlice
-    , contextLookup = orig.contextLookup
-    , distanceCode = orig.distanceCode
-    , distanceConstants = orig.distanceConstants
-    , distance = orig.distance
-    , copyLength = orig.copyLength
-    , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
-    , flags = orig.flags
-    , input = orig.input
-    }
-
-
-updateEvaluateState9 : Int -> Int -> Array Int -> Int -> Int -> State -> State
-updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLength orig =
+updateEvaluateState9 : Array Int -> Int -> Int -> State -> State
+updateEvaluateState9 ringBuffer pos metaBlockLength orig =
     { ringBuffer = ringBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3572,13 +3519,10 @@ updateEvaluateState9 nextRunningState runningState ringBuffer pos metaBlockLengt
     , distExtraBits = orig.distExtraBits
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
     , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
-    , runningState = runningState
-    , nextRunningState = nextRunningState
     , accumulator32 = orig.accumulator32
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
@@ -3621,13 +3565,10 @@ copyState orig =
     , distExtraBits = orig.distExtraBits
     , byteBuffer = orig.byteBuffer
     , shortBuffer = orig.shortBuffer
-    , intBuffer = orig.intBuffer
     , rings = orig.rings
     , blockTrees = orig.blockTrees
     , treeGroup = orig.treeGroup
     , distOffset = orig.distOffset
-    , runningState = orig.runningState
-    , nextRunningState = orig.nextRunningState
     , accumulator32 = orig.accumulator32
     , bitOffset = orig.bitOffset
     , halfOffset = orig.halfOffset
