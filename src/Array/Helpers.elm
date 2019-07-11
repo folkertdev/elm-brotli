@@ -1,4 +1,4 @@
-module Array.Helpers exposing (copyWithin, decodeArray, fasterEncode, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, unsafeGet, update)
+module Array.Helpers exposing (copyWithin, decodeArray, decodeByteArray, fasterEncode, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, unsafeGet, update)
 
 import Array exposing (Array)
 import Bitwise
@@ -108,6 +108,47 @@ hasDuplicatesList list =
                         go (Set.insert x seen) xs
     in
     go Set.empty list
+
+
+decodeByteArray : Int -> Decoder (Array Int)
+decodeByteArray n =
+    Decode.loop ( n, Array.empty ) decodeByteArrayHelp
+
+
+decodeByteArrayHelp : ( Int, Array Int ) -> Decoder (Decode.Step ( Int, Array Int ) (Array Int))
+decodeByteArrayHelp ( remaining, accum ) =
+    if remaining >= 4 then
+        Decode.unsignedInt32 BE
+            |> Decode.map
+                (\new ->
+                    let
+                        byte1 =
+                            Bitwise.shiftRightBy 24 new
+
+                        byte2 =
+                            Bitwise.shiftRightBy 16 new
+
+                        byte3 =
+                            Bitwise.shiftRightBy 8 new
+
+                        byte4 =
+                            new
+
+                        newAccum =
+                            accum
+                                |> Array.push byte1
+                                |> Array.push byte2
+                                |> Array.push byte3
+                                |> Array.push byte4
+                    in
+                    Decode.Loop ( remaining - 4, newAccum )
+                )
+
+    else if remaining > 0 then
+        Decode.unsignedInt8 |> Decode.map (\new -> Decode.Loop ( remaining - 1, Array.push new accum ))
+
+    else
+        Decode.succeed (Decode.Done accum)
 
 
 decodeArray : Int -> Decoder a -> Decoder (Array a)

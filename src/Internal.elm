@@ -3178,7 +3178,7 @@ readInput offset length s =
             end - s.input.offset
 
         decoder =
-            Decode.map2 (\_ v -> v) (Decode.bytes s.input.offset) (Array.Helpers.decodeArray bytesRead Decode.signedInt8)
+            Decode.map2 (\_ v -> v) (Decode.bytes s.input.offset) (Array.Helpers.decodeByteArray bytesRead)
     in
     case Decode.decode decoder s.input.buffer of
         Just newSegment ->

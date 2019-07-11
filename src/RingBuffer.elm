@@ -156,6 +156,18 @@ updateExpectation flags metaBlockLength ((RingBuffer array ringBufferSize maxRin
 
 copyWithin dest start end (RingBuffer array a b c e) =
     let
+        src =
+            start
+
+        srcEnd =
+            end
+
+        dst =
+            dest
+
+        dstEnd =
+            dst + copyLength
+
         copyLength =
             end - start
 
@@ -190,6 +202,16 @@ copyWithin dest start end (RingBuffer array a b c e) =
             else
                 accum
     in
+    {- slower, probably because of iteration
+       if srcEnd < dst || src > dstEnd then
+           let
+               segment =
+                   Array.slice start end array
+           in
+           RingBuffer (Array.foldl Array.push array segment) a b c e
+
+       else
+    -}
     RingBuffer (go 0 dest start array) a b c e
 
 
