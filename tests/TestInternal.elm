@@ -9,6 +9,7 @@ import Constants
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, int, list, string)
 import Internal
+import RingBuffer
 import Test exposing (..)
 import Transforms
 
@@ -189,7 +190,8 @@ bug2 =
                     result =
                         Array.fromList [ 116, 105, 109, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
                 in
-                Transforms.transformDictionaryWord ringBuffer 0 Constants.dictionary_data 0 4 Transforms.rfc_transforms 0
+                Transforms.transformDictionaryWord (RingBuffer.fromArray ringBuffer) 0 Constants.dictionary_data 0 4 Transforms.rfc_transforms 0
+                    |> Tuple.mapFirst (RingBuffer.slice 0 200)
                     |> Expect.equal ( result, 4 )
         , test "calculateDistanceAlphabetSize" <|
             \_ ->

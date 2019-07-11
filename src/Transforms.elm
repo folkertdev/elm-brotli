@@ -3,6 +3,7 @@ module Transforms exposing (Transforms, new, rfc_transforms, transformDictionary
 import Array exposing (Array)
 import Array.Helpers
 import Bitwise
+import RingBuffer exposing (RingBuffer)
 
 
 {-| Use pre-calculated transforms. The total size of the code is larger than the size of the decoded data
@@ -58,7 +59,7 @@ The transformations are described [here](https://tools.ietf.org/html/rfc7932#pag
 You can see that the brotli spec is really geared towards English text.
 
 -}
-transformDictionaryWord : Array Int -> Int -> Array Int -> Int -> Int -> Transforms -> Int -> ( Array Int, Int )
+transformDictionaryWord : RingBuffer -> Int -> Array Int -> Int -> Int -> Transforms -> Int -> ( RingBuffer, Int )
 transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformIndex =
     let
         offset =
@@ -133,11 +134,12 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
                         ( currentOffset, accum )
 
                     Just value ->
-                        prefixSuffixLoop (currentSuffix + 1) fixEnd (currentOffset + 1) (Array.set currentOffset value accum)
+                        prefixSuffixLoop (currentSuffix + 1) fixEnd (currentOffset + 1) (RingBuffer.set currentOffset value accum)
 
             else
                 ( currentOffset, accum )
 
+        applyTransform1 : Int -> Int -> RingBuffer -> RingBuffer
         applyTransform1 inputLen_ currentOffset =
             let
                 initialUppercaseOffset =
@@ -147,23 +149,23 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
                     if currentLen > 0 then
                         let
                             c0 =
-                                Array.Helpers.unsafeGet uppercaseOffset accum
+                                RingBuffer.get uppercaseOffset accum
                         in
                         if c0 < 0xC0 then
                             go (currentLen - 1)
                                 (uppercaseOffset + 1)
                                 (if c0 >= 97 && c0 <= 122 then
-                                    Array.Helpers.update uppercaseOffset (\v -> Bitwise.xor v 32) accum
+                                    RingBuffer.update uppercaseOffset (\v -> Bitwise.xor v 32) accum
 
                                  else
                                     accum
                                 )
 
                         else if c0 < 0x0E then
-                            go (currentLen - 2) (uppercaseOffset + 2) (Array.Helpers.update (uppercaseOffset + 1) (\v -> Bitwise.xor v 32) accum)
+                            go (currentLen - 2) (uppercaseOffset + 2) (RingBuffer.update (uppercaseOffset + 1) (\v -> Bitwise.xor v 32) accum)
 
                         else
-                            go (currentLen - 3) (uppercaseOffset + 3) (Array.Helpers.update (uppercaseOffset + 2) (\v -> Bitwise.xor v 5) accum)
+                            go (currentLen - 3) (uppercaseOffset + 3) (RingBuffer.update (uppercaseOffset + 2) (\v -> Bitwise.xor v 5) accum)
 
                     else
                         accum
@@ -177,6 +179,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
                 )
                 initialUppercaseOffset
 
+        applyTransform2 : Int -> Int -> RingBuffer -> RingBuffer
         applyTransform2 inputLen_ currentOffset =
             let
                 param =
@@ -186,7 +189,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
                     if currentLength > 0 then
                         let
                             c0 =
-                                Array.Helpers.unsafeGet shiftOffset accum |> Bitwise.and 0xFF
+                                RingBuffer.get shiftOffset accum |> Bitwise.and 0xFF
 
                             result =
                                 transform20Helper c0 scalar currentLength shiftOffset accum
@@ -207,7 +210,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
 
         go1 i currentOffset currentSourceOffset accum =
             if i > 0 then
-                go1 (i - 1) (currentOffset + 1) (currentSourceOffset + 1) (Array.set currentOffset (Array.Helpers.unsafeGet currentSourceOffset src) accum)
+                go1 (i - 1) (currentOffset + 1) (currentSourceOffset + 1) (RingBuffer.set currentOffset (Array.Helpers.unsafeGet currentSourceOffset src) accum)
 
             else
                 ( currentOffset, accum )
@@ -235,12 +238,12 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
     ( accum4, offset4 - dstOffset )
 
 
-transform20Helper : Int -> Int -> Int -> Int -> Array Int -> { scalar : Int, step : Int, dst : Array Int }
+transform20Helper : Int -> Int -> Int -> Int -> RingBuffer -> { scalar : Int, step : Int, dst : RingBuffer }
 transform20Helper c0 scalar len shiftOffset dst =
     if c0 < 0x80 then
         { scalar = scalar + c0
         , step = 1
-        , dst = Array.set shiftOffset (Bitwise.and scalar 0x7F) dst
+        , dst = RingBuffer.set shiftOffset (Bitwise.and scalar 0x7F) dst
         }
 
     else if c0 < 0xC0 then
@@ -251,7 +254,7 @@ transform20Helper c0 scalar len shiftOffset dst =
         if len >= 2 then
             let
                 c1 =
-                    Array.Helpers.unsafeGet (shiftOffset + 1) dst
+                    RingBuffer.get (shiftOffset + 1) dst
 
                 newScalar =
                     scalar + Bitwise.or (Bitwise.and c1 0x3F) (Bitwise.shiftLeftBy 6 (Bitwise.and c0 0x1F))
@@ -259,8 +262,8 @@ transform20Helper c0 scalar len shiftOffset dst =
             { scalar = newScalar
             , dst =
                 dst
-                    |> Array.set shiftOffset (Bitwise.or 0xC0 (Bitwise.and (Bitwise.shiftRightBy 6 scalar) 0x1F))
-                    |> Array.set (shiftOffset + 1) (Bitwise.or (Bitwise.and c1 0xC0) (Bitwise.and scalar 0x3F))
+                    |> RingBuffer.set shiftOffset (Bitwise.or 0xC0 (Bitwise.and (Bitwise.shiftRightBy 6 scalar) 0x1F))
+                    |> RingBuffer.set (shiftOffset + 1) (Bitwise.or (Bitwise.and c1 0xC0) (Bitwise.and scalar 0x3F))
             , step = 2
             }
 
@@ -271,10 +274,10 @@ transform20Helper c0 scalar len shiftOffset dst =
         if len >= 3 then
             let
                 c1 =
-                    Array.Helpers.unsafeGet (shiftOffset + 1) dst
+                    RingBuffer.get (shiftOffset + 1) dst
 
                 c2 =
-                    Array.Helpers.unsafeGet (shiftOffset + 2) dst
+                    RingBuffer.get (shiftOffset + 2) dst
 
                 newScalar =
                     scalar + Bitwise.and c2 0x3F |> Bitwise.or (Bitwise.shiftLeftBy 6 (Bitwise.and c1 0x3F)) |> Bitwise.or (Bitwise.shiftLeftBy 12 (Bitwise.and c0 0x0F))
@@ -282,9 +285,9 @@ transform20Helper c0 scalar len shiftOffset dst =
             { scalar = newScalar
             , dst =
                 dst
-                    |> Array.set shiftOffset (Bitwise.or 0xE0 (Bitwise.and (Bitwise.shiftRightBy 12 scalar) 0x0F))
-                    |> Array.set (shiftOffset + 1) (Bitwise.or (Bitwise.and c1 0xC0) (Bitwise.and (Bitwise.shiftRightBy 6 scalar) 0x3F))
-                    |> Array.set (shiftOffset + 1) (Bitwise.or (Bitwise.and c2 0xC0) (Bitwise.and scalar 0x3F))
+                    |> RingBuffer.set shiftOffset (Bitwise.or 0xE0 (Bitwise.and (Bitwise.shiftRightBy 12 scalar) 0x0F))
+                    |> RingBuffer.set (shiftOffset + 1) (Bitwise.or (Bitwise.and c1 0xC0) (Bitwise.and (Bitwise.shiftRightBy 6 scalar) 0x3F))
+                    |> RingBuffer.set (shiftOffset + 1) (Bitwise.or (Bitwise.and c2 0xC0) (Bitwise.and scalar 0x3F))
             , step = 3
             }
 
@@ -295,13 +298,13 @@ transform20Helper c0 scalar len shiftOffset dst =
         if len >= 4 then
             let
                 c1 =
-                    Array.Helpers.unsafeGet (shiftOffset + 1) dst
+                    RingBuffer.get (shiftOffset + 1) dst
 
                 c2 =
-                    Array.Helpers.unsafeGet (shiftOffset + 2) dst
+                    RingBuffer.get (shiftOffset + 2) dst
 
                 c3 =
-                    Array.Helpers.unsafeGet (shiftOffset + 3) dst
+                    RingBuffer.get (shiftOffset + 3) dst
 
                 newScalar =
                     scalar
@@ -314,10 +317,10 @@ transform20Helper c0 scalar len shiftOffset dst =
             { scalar = newScalar
             , dst =
                 dst
-                    |> Array.set shiftOffset (Bitwise.or 0xF0 ((scalar |> Bitwise.shiftRightBy 18) |> Bitwise.and 0x07))
-                    |> Array.set (shiftOffset + 1) (Bitwise.or (Bitwise.and c1 0xC0) ((scalar |> Bitwise.shiftRightBy 12) |> Bitwise.and 0x3F))
-                    |> Array.set (shiftOffset + 2) (Bitwise.or (Bitwise.and c2 0xC0) ((scalar |> Bitwise.shiftRightBy 6) |> Bitwise.and 0x3F))
-                    |> Array.set (shiftOffset + 3) (Bitwise.or (Bitwise.and c3 0xC0) (scalar |> Bitwise.and 0x3F))
+                    |> RingBuffer.set shiftOffset (Bitwise.or 0xF0 ((scalar |> Bitwise.shiftRightBy 18) |> Bitwise.and 0x07))
+                    |> RingBuffer.set (shiftOffset + 1) (Bitwise.or (Bitwise.and c1 0xC0) ((scalar |> Bitwise.shiftRightBy 12) |> Bitwise.and 0x3F))
+                    |> RingBuffer.set (shiftOffset + 2) (Bitwise.or (Bitwise.and c2 0xC0) ((scalar |> Bitwise.shiftRightBy 6) |> Bitwise.and 0x3F))
+                    |> RingBuffer.set (shiftOffset + 3) (Bitwise.or (Bitwise.and c3 0xC0) (scalar |> Bitwise.and 0x3F))
             , step = 4
             }
 

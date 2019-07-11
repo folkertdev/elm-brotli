@@ -7,6 +7,7 @@ import Bytes exposing (Bytes, Endianness(..))
 import Bytes.Decode as Decode exposing (Step(..))
 import Bytes.Encode as Encode
 import Constants
+import RingBuffer exposing (RingBuffer)
 import Transforms
 
 
@@ -58,7 +59,7 @@ type alias Distance =
 
 
 type alias State =
-    { ringBuffer : Array Int
+    { ringBuffer : RingBuffer
     , contextModes : Array Int
     , contextMap : Array Int
     , distContextMap : Array Int
@@ -132,7 +133,7 @@ defaultState buffer =
             , isLargeWindow = False
             }
     in
-    { ringBuffer = Array.empty
+    { ringBuffer = RingBuffer.empty 0
     , contextModes = Array.empty
     , contextMap = Array.empty
     , distContextMap = Array.empty
@@ -397,70 +398,11 @@ readNextMetablockHeader runningState nextRunningState s =
 
                                 else
                                     let
-                                        newExpectedTotalSize =
-                                            min (s6.expectedTotalSize + s6.metaBlockLength) (Bitwise.shiftLeftBy 30 1)
+                                        newRingBuffer =
+                                            RingBuffer.updateExpectation s6.flags s6.metaBlockLength s6.ringBuffer
                                     in
-                                    if s6.ringBufferSize < s6.maxRingBufferSize then
-                                        case maybeReallocateRingBuffer newExpectedTotalSize s6 of
-                                            Nothing ->
-                                                Ok ( newRunningState, nextRunningState, { s6 | expectedTotalSize = newExpectedTotalSize } )
-
-                                            Just { ringBuffer, ringBufferSize } ->
-                                                Ok ( newRunningState, nextRunningState, { s6 | ringBuffer = ringBuffer, ringBufferSize = ringBufferSize, expectedTotalSize = newExpectedTotalSize } )
-
-                                    else
-                                        Ok ( newRunningState, nextRunningState, { s6 | expectedTotalSize = newExpectedTotalSize } )
+                                    Ok ( newRunningState, nextRunningState, { s6 | ringBuffer = newRingBuffer, ringBufferSize = RingBuffer.size newRingBuffer, maxRingBufferSize = RingBuffer.maxSize newRingBuffer } )
                 )
-
-
-maybeReallocateRingBuffer : Int -> { state | flags : { flags | inputEnd : Bool }, ringBuffer : Array Int, ringBufferSize : Int, maxRingBufferSize : Int } -> Maybe { ringBuffer : Array Int, ringBufferSize : Int }
-maybeReallocateRingBuffer expectedTotalSize s =
-    let
-        newSize =
-            let
-                initialSize =
-                    s.maxRingBufferSize
-            in
-            if initialSize > expectedTotalSize then
-                let
-                    minimalNewSize =
-                        expectedTotalSize
-
-                    calculate1 size =
-                        if Bitwise.shiftRightBy 1 size > minimalNewSize then
-                            calculate1 (Bitwise.shiftRightBy 1 size)
-
-                        else
-                            size
-
-                    calculate2 size =
-                        if s.flags.inputEnd == False && size < 16384 && s.maxRingBufferSize >= 16384 then
-                            16384
-
-                        else
-                            size
-                in
-                initialSize |> calculate1 |> calculate2
-
-            else
-                initialSize
-    in
-    if newSize < s.ringBufferSize then
-        Nothing
-
-    else
-        let
-            ringBufferSizeWithSlack =
-                newSize + 37
-
-            newBuffer =
-                if Array.length s.ringBuffer == 0 then
-                    Array.repeat ringBufferSizeWithSlack 0
-
-                else
-                    Array.append (Array.slice 0 s.ringBufferSize s.ringBuffer) (Array.repeat (ringBufferSizeWithSlack - s.ringBufferSize) 0)
-        in
-        Just { ringBuffer = newBuffer, ringBufferSize = newSize }
 
 
 decodeMetaBlockBytes : State -> Result Error State
@@ -1874,11 +1816,16 @@ evaluateState1 ( runningState, nextRunningState, s ) =
                 Err InvalidWindowBits
 
             else
+                let
+                    maxRingBufferSize =
+                        Bitwise.shiftLeftBy windowBits 1
+                in
                 Ok
                     ( 2
                     , nextRunningState
                     , { newS
-                        | maxRingBufferSize = Bitwise.shiftLeftBy windowBits 1
+                        | ringBuffer = RingBuffer.resize maxRingBufferSize newS.ringBuffer
+                        , maxRingBufferSize = maxRingBufferSize
                         , maxBackwardDistance = Bitwise.shiftLeftBy windowBits 1 - 16
                       }
                     )
@@ -1896,7 +1843,7 @@ decompress written ( runningState, nextRunningState, s ) =
         Err (CustomError "use evaluateState1 first")
 
     else
-        case decompressHelp { fence = calculateFence s, ringBufferMask = s.ringBufferSize - 1 } written runningState nextRunningState s of
+        case decompressHelp { fence = calculateFence s, ringBufferMask = RingBuffer.size s.ringBuffer - 1 } written runningState nextRunningState s of
             Err e ->
                 Err e
 
@@ -1928,7 +1875,8 @@ decompressHelp : Context -> Written -> Int -> Int -> State -> Result Error ( ( I
 decompressHelp context written runningState nextRunningState s =
     let
         _ =
-            -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+            -- Debug.log "state" ( runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
+            -- Debug.log "state" ( runningState, s.ringBuffer )
             ()
     in
     case runningState of
@@ -1949,7 +1897,7 @@ decompressHelp context written runningState nextRunningState s =
                             fence =
                                 calculateFence s2
                         in
-                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written newRunningState newNextRunningState s2
+                        decompressHelp { fence = fence, ringBufferMask = RingBuffer.size s2.ringBuffer - 1 } written newRunningState newNextRunningState s2
 
         3 ->
             case readMetablockHuffmanCodesAndContextMaps s of
@@ -1981,7 +1929,7 @@ decompressHelp context written runningState nextRunningState s =
                                         ( newBitOffset, value ) ->
                                             let
                                                 newRingBuffer =
-                                                    Array.set s1.pos value s1.ringBuffer
+                                                    RingBuffer.set s1.pos value s1.ringBuffer
 
                                                 newPos =
                                                     s1.pos + 1
@@ -2025,11 +1973,11 @@ decompressHelp context written runningState nextRunningState s =
             else
                 let
                     init_prevByte1 =
-                        Array.Helpers.unsafeGet (Bitwise.and (s.pos - 1) context.ringBufferMask) s.ringBuffer
+                        RingBuffer.get (Bitwise.and (s.pos - 1) context.ringBufferMask) s.ringBuffer
                             |> Bitwise.and 0xFF
 
                     init_prevByte2 =
-                        Array.Helpers.unsafeGet (Bitwise.and (s.pos - 2) context.ringBufferMask) s.ringBuffer
+                        RingBuffer.get (Bitwise.and (s.pos - 2) context.ringBufferMask) s.ringBuffer
                             |> Bitwise.and 0xFF
                 in
                 case evaluateState7 context init_prevByte1 init_prevByte2 runningState nextRunningState s of
@@ -2120,7 +2068,7 @@ decompressHelp context written runningState nextRunningState s =
         13 ->
             let
                 ( wasWritten, newWritten ) =
-                    writeRingBuffer (min s.pos s.ringBufferSize) written s
+                    writeRingBuffer (min s.pos (RingBuffer.size s.ringBuffer)) written s
             in
             if not wasWritten then
                 Ok ( ( runningState, nextRunningState, s ), context, newWritten )
@@ -2134,10 +2082,11 @@ decompressHelp context written runningState nextRunningState s =
                         else
                             s.maxDistance
                 in
-                if s.pos >= s.ringBufferSize then
+                if s.pos >= RingBuffer.size s.ringBuffer then
                     let
                         newRingBuffer =
-                            Array.Helpers.copyWithin 0 s.ringBufferSize s.pos s.ringBuffer
+                            -- wth is going on here?
+                            RingBuffer.copyWithin 0 (RingBuffer.size s.ringBuffer) s.pos s.ringBuffer
 
                         newState =
                             { s
@@ -2363,7 +2312,7 @@ evaluateState7 context prevByte1 prevByte2 runningState nextRunningState s0 =
                     ( newBitOffset, byte1 ) ->
                         let
                             newRingBuffer =
-                                Array.set s2.pos byte1 s2.ringBuffer
+                                RingBuffer.set s2.pos byte1 s2.ringBuffer
 
                             newPos =
                                 s2.pos + 1
@@ -2405,70 +2354,11 @@ evaluateState8 context ( runningState, nextRunningState, s ) =
 
         dstEnd =
             dst + copyLength
-
-        _ =
-            if dstEnd < s.pos then
-                ( 1, 1 )
-
-            else
-                Debug.log "bad?" ( dstEnd, s.pos )
     in
     if (srcEnd < context.ringBufferMask) && (dstEnd < context.ringBufferMask) then
         let
             newRingBuffer =
-                if srcEnd > dst && dstEnd > src then
-                    -- the source and target areas overlap, so we have to be very careful to put values in place before they are read again
-                    let
-                        go k currentDst currentSrc accum =
-                            if k < copyLength then
-                                go (k + 4)
-                                    (currentDst + 4)
-                                    (currentSrc + 4)
-                                    (let
-                                        a0 =
-                                            accum
-
-                                        a1 =
-                                            Array.set (currentDst + 0) (Array.Helpers.unsafeGet (currentSrc + 0) a0) a0
-
-                                        a2 =
-                                            Array.set (currentDst + 1) (Array.Helpers.unsafeGet (currentSrc + 1) a1) a1
-
-                                        a3 =
-                                            Array.set (currentDst + 2) (Array.Helpers.unsafeGet (currentSrc + 2) a2) a2
-
-                                        a4 =
-                                            Array.set (currentDst + 3) (Array.Helpers.unsafeGet (currentSrc + 3) a3) a3
-                                     in
-                                     a4
-                                    )
-
-                            else
-                                accum
-                    in
-                    go 0 dst src s.ringBuffer
-
-                else if copyLength < 12 then
-                    let
-                        go k currentDst currentSrc accum =
-                            if k < copyLength then
-                                go (k + 4)
-                                    (currentDst + 4)
-                                    (currentSrc + 4)
-                                    (accum
-                                        |> Array.set (currentDst + 0) (Array.Helpers.unsafeGet (currentSrc + 0) accum)
-                                        |> Array.set (currentDst + 1) (Array.Helpers.unsafeGet (currentSrc + 1) accum)
-                                        |> Array.set (currentDst + 2) (Array.Helpers.unsafeGet (currentSrc + 2) accum)
-                                        |> Array.set (currentDst + 3) (Array.Helpers.unsafeGet (currentSrc + 3) accum)
-                                    )
-
-                            else
-                                accum
-                    in
-                    go 0 dst src s.ringBuffer
-
-                else
-                    Array.Helpers.copyWithin dst src srcEnd s.ringBuffer
+                RingBuffer.copyWithin dst src srcEnd s.ringBuffer
         in
         ( if runningState == 8 then
             4
@@ -2487,11 +2377,11 @@ evaluateState8 context ( runningState, nextRunningState, s ) =
     else
         -- NOTE this branch is untested; seems to almost never get hit
         let
-            go : Int -> { ringBuffer : Array Int, metaBlockLength : Int, pos : Int, j : Int } -> { ringBuffer : Array Int, metaBlockLength : Int, pos : Int, j : Int }
+            go : Int -> { ringBuffer : RingBuffer, metaBlockLength : Int, pos : Int, j : Int } -> { ringBuffer : RingBuffer, metaBlockLength : Int, pos : Int, j : Int }
             go distance state =
                 let
                     s1 =
-                        { ringBuffer = state.ringBuffer |> Array.set state.pos (Array.Helpers.unsafeGet (Bitwise.and (state.pos - distance) context.ringBufferMask) state.ringBuffer)
+                        { ringBuffer = state.ringBuffer |> RingBuffer.set state.pos (RingBuffer.get (Bitwise.and (state.pos - distance) context.ringBufferMask) state.ringBuffer)
                         , metaBlockLength = state.metaBlockLength - 1
                         , pos = state.pos + 1
                         , j = state.j + 1
@@ -2537,7 +2427,7 @@ copyUncompressedData s =
     else
         let
             chunkLength =
-                min (s.ringBufferSize - s.pos) s.metaBlockLength
+                min (RingBuffer.size s.ringBuffer - s.pos) s.metaBlockLength
         in
         case copyBytesToRingBuffer s.pos chunkLength s.ringBuffer s of
             Err e ->
@@ -2548,7 +2438,7 @@ copyUncompressedData s =
                     s2 =
                         { s1 | ringBuffer = newRingBuffer, metaBlockLength = s1.metaBlockLength - chunkLength, pos = s1.pos + chunkLength }
                 in
-                if s2.pos == s2.ringBufferSize then
+                if s2.pos == RingBuffer.size s2.ringBuffer then
                     Ok ( 13, 6, s2 )
 
                 else
@@ -2560,7 +2450,7 @@ copyUncompressedData s =
                             Ok ( 2, -42, state )
 
 
-copyBytesToRingBuffer : Int -> Int -> Array Int -> State -> Result Error ( State, Array Int )
+copyBytesToRingBuffer : Int -> Int -> RingBuffer -> State -> Result Error ( State, RingBuffer )
 copyBytesToRingBuffer offset length data s =
     -- NOTE data is the ringbufffer
     if Bitwise.and s.bitOffset 7 /= 0 then
@@ -2570,7 +2460,7 @@ copyBytesToRingBuffer offset length data s =
         let
             loop1 state bitOffset currentOffset currentLength accum =
                 if bitOffset /= 32 && currentLength /= 0 then
-                    loop1 state (bitOffset + 8) (currentOffset + 1) (currentLength - 1) (Array.set currentOffset (Bitwise.shiftRightZfBy bitOffset state.accumulator32) accum)
+                    loop1 state (bitOffset + 8) (currentOffset + 1) (currentLength - 1) (RingBuffer.set currentOffset (Bitwise.shiftRightZfBy bitOffset state.accumulator32) accum)
 
                 else
                     ( updateBitOffset bitOffset state, ( currentOffset, currentLength ), accum )
@@ -2593,7 +2483,7 @@ copyBytesToRingBuffer offset length data s =
                     in
                     ( { state | halfOffset = state.halfOffset + copyNibbles }
                     , ( currentOffset + delta, currentLength - delta )
-                    , Array.Helpers.setSlice (Array.slice readOffset (readOffset + delta) state.byteBuffer) currentOffset accum
+                    , RingBuffer.setSlice (Array.slice readOffset (readOffset + delta) state.byteBuffer) currentOffset accum
                     )
 
                 else
@@ -2610,7 +2500,7 @@ copyBytesToRingBuffer offset length data s =
                                 (updateBitOffset (state.bitOffset + 8) state)
                                 (currentOffset + 1)
                                 (currentLength - 1)
-                                (Array.set currentOffset (Bitwise.shiftRightZfBy state.bitOffset state.accumulator32) accum)
+                                (RingBuffer.set currentOffset (Bitwise.shiftRightZfBy state.bitOffset state.accumulator32) accum)
 
                         else
                             ( state, accum )
@@ -2665,7 +2555,7 @@ writeRingBuffer ringBufferBytesReady written s =
             if toWrite /= 0 then
                 let
                     slice =
-                        Array.slice written.fromRingBuffer (written.fromRingBuffer + toWrite) s.ringBuffer
+                        RingBuffer.slice written.fromRingBuffer (written.fromRingBuffer + toWrite) s.ringBuffer
 
                     newOutput =
                         Array.Helpers.fasterEncode slice :: written.output
@@ -2991,7 +2881,7 @@ calculateFence s =
 
        else
     -}
-    s.ringBufferSize
+    RingBuffer.size s.ringBuffer
 
 
 halfAvailable : State -> Int
@@ -3415,7 +3305,7 @@ updateBitOffset newBitOffset orig =
     }
 
 
-copyState7 : Int -> Int -> Int -> Array Int -> Int -> State -> State
+copyState7 : Int -> Int -> Int -> RingBuffer -> Int -> State -> State
 copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     { ringBuffer = newRingBuffer
     , contextModes = orig.contextModes
@@ -3519,7 +3409,7 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j dist
     }
 
 
-updateEvaluateState8 : Array Int -> Int -> Int -> Int -> State -> State
+updateEvaluateState8 : RingBuffer -> Int -> Int -> Int -> State -> State
 updateEvaluateState8 ringBuffer j metaBlockLength pos orig =
     { ringBuffer = ringBuffer
     , contextModes = orig.contextModes
@@ -3563,7 +3453,7 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos orig =
     }
 
 
-updateEvaluateState9 : Array Int -> Int -> Int -> State -> State
+updateEvaluateState9 : RingBuffer -> Int -> Int -> State -> State
 updateEvaluateState9 ringBuffer pos metaBlockLength orig =
     { ringBuffer = ringBuffer
     , contextModes = orig.contextModes
