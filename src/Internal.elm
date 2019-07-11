@@ -2159,9 +2159,27 @@ evaluateState4 ( runningState, nextRunningState, s ) =
 
             Ok s1 ->
                 let
-                    maybeCommandBlock =
+                    ( s2, commandBlockData ) =
                         if s1.blockLength.commandBlockLength == 0 then
-                            decodeCommandBlockSwitch s1
+                            let
+                                ( sx, newRings, value ) =
+                                    decodeBlockTypeAndLength 1 s1.num.numCommandBlockTypes s1
+
+                                oldBlockLength =
+                                    sx.blockLength
+
+                                newBlockLength =
+                                    { literalBlockLength = oldBlockLength.literalBlockLength
+                                    , commandBlockLength = value
+                                    , distanceBlockLength = oldBlockLength.distanceBlockLength
+                                    }
+                            in
+                            ( sx
+                            , { blockLength = newBlockLength
+                              , commandTreeIdx = Array.Helpers.unsafeGet 7 newRings
+                              , rings = newRings
+                              }
+                            )
 
                         else
                             -- @optimize can we remove this allocation?
@@ -2171,9 +2189,10 @@ evaluateState4 ( runningState, nextRunningState, s ) =
                               , rings = s1.rings
                               }
                             )
-
-                    ( ( s3, v ), commandBlockData ) =
-                        maybeCommandBlock |> Tuple.mapFirst topUpAccumulator |> (\( state, data ) -> ( readSymbol state.treeGroup.commandTreeGroup data.commandTreeIdx state, data ))
+                in
+                let
+                    ( s3, v ) =
+                        s2 |> topUpAccumulator |> readSymbol s2.treeGroup.commandTreeGroup commandBlockData.commandTreeIdx
 
                     cmdCode =
                         Bitwise.shiftLeftBy 2 v
@@ -2187,7 +2206,7 @@ evaluateState4 ( runningState, nextRunningState, s ) =
                     copyLengthOffset =
                         Array.Helpers.unsafeGet (cmdCode + 2) Constants.cmd_lookup
 
-                    readLengths state =
+                    ( s5, insertLengthBits, copyLengthBits ) =
                         let
                             extraBits1 =
                                 Bitwise.and insertAndCopyExtraBits 0xFF
@@ -2195,22 +2214,22 @@ evaluateState4 ( runningState, nextRunningState, s ) =
                             extraBits2 =
                                 Bitwise.shiftRightBy 8 insertAndCopyExtraBits
                         in
-                        readBits2 extraBits1 extraBits2 state
-
-                    ( s5, insertLengthBits, copyLengthBits ) =
-                        readLengths s3
+                        readBits2 extraBits1 extraBits2 s3
 
                     oldBlockLength =
                         commandBlockData.blockLength
 
                     newBlockLength =
-                        { oldBlockLength | commandBlockLength = oldBlockLength.commandBlockLength - 1 }
+                        { oldBlockLength
+                            | commandBlockLength = oldBlockLength.commandBlockLength - 1
+                            , literalBlockLength = oldBlockLength.literalBlockLength
+                            , distanceBlockLength = oldBlockLength.distanceBlockLength
+                        }
                 in
                 Ok
                     ( 7
                     , nextRunningState
                     , updateEvaluateState4
-                        -- cmdBlockIndex, rings
                         0
                         (copyLengthBits + copyLengthOffset)
                         (insertLengthBits + insertLengthOffset)
