@@ -1422,21 +1422,22 @@ readBlockLength tableGroup tableIdx s0 =
     let
         s1 =
             topUpAccumulator s0
+
+        ( s2, code ) =
+            readSymbol tableGroup tableIdx s1
+
+        n =
+            Array.Helpers.unsafeGet code Constants.block_length_n_bits
+
+        ( s4, result ) =
+            if n <= 16 then
+                readFewBitsSafe n s2
+
+            else
+                -- @note removed a topUpAccumulator here
+                readManyBits n s2
     in
-    case readSymbol tableGroup tableIdx s1 of
-        ( s2, code ) ->
-            let
-                n =
-                    Array.Helpers.unsafeGet code Constants.block_length_n_bits
-
-                ( s4, result ) =
-                    if n <= 16 then
-                        readFewBitsSafe n s2
-
-                    else
-                        readManyBits n (topUpAccumulator s2)
-            in
-            ( s4, Array.Helpers.unsafeGet code Constants.block_length_offset + result )
+    ( s4, Array.Helpers.unsafeGet code Constants.block_length_offset + result )
 
 
 map2 : (a -> b -> c) -> (State -> Result Error ( State, a )) -> (State -> Result Error ( State, b )) -> (State -> Result Error ( State, c ))
@@ -2163,49 +2164,118 @@ evaluateState4 ( runningState, nextRunningState, s ) =
                             decodeCommandBlockSwitch s1
 
                         else
-                            s1
+                            -- @optimize can we remove this allocation?
+                            ( s1
+                            , { blockLength = s1.blockLength
+                              , commandTreeIdx = s1.commandTreeIdx
+                              , rings = s1.rings
+                              }
+                            )
+
+                    ( ( s3, v ), commandBlockData ) =
+                        maybeCommandBlock |> Tuple.mapFirst topUpAccumulator |> (\( state, data ) -> ( readSymbol state.treeGroup.commandTreeGroup data.commandTreeIdx state, data ))
+
+                    cmdCode =
+                        Bitwise.shiftLeftBy 2 v
+
+                    insertAndCopyExtraBits =
+                        Array.Helpers.unsafeGet (cmdCode + 0) Constants.cmd_lookup
+
+                    insertLengthOffset =
+                        Array.Helpers.unsafeGet (cmdCode + 1) Constants.cmd_lookup
+
+                    copyLengthOffset =
+                        Array.Helpers.unsafeGet (cmdCode + 2) Constants.cmd_lookup
+
+                    readLengths state =
+                        let
+                            extraBits1 =
+                                Bitwise.and insertAndCopyExtraBits 0xFF
+
+                            extraBits2 =
+                                Bitwise.shiftRightBy 8 insertAndCopyExtraBits
+                        in
+                        readBits2 extraBits1 extraBits2 state
+
+                    ( s5, insertLengthBits, copyLengthBits ) =
+                        readLengths s3
+
+                    oldBlockLength =
+                        commandBlockData.blockLength
+
+                    newBlockLength =
+                        { oldBlockLength | commandBlockLength = oldBlockLength.commandBlockLength - 1 }
                 in
-                case maybeCommandBlock |> topUpAccumulator of
-                    s2 ->
-                        case readSymbol s2.treeGroup.commandTreeGroup s2.commandTreeIdx s2 of
-                            ( s3, v ) ->
-                                let
-                                    cmdCode =
-                                        Bitwise.shiftLeftBy 2 v
+                Ok
+                    ( 7
+                    , nextRunningState
+                    , updateEvaluateState4
+                        -- cmdBlockIndex, rings
+                        0
+                        (copyLengthBits + copyLengthOffset)
+                        (insertLengthBits + insertLengthOffset)
+                        (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup)
+                        newBlockLength
+                        commandBlockData.commandTreeIdx
+                        commandBlockData.rings
+                        s5
+                    )
 
-                                    insertAndCopyExtraBits =
-                                        Array.Helpers.unsafeGet (cmdCode + 0) Constants.cmd_lookup
 
-                                    insertLengthOffset =
-                                        Array.Helpers.unsafeGet (cmdCode + 1) Constants.cmd_lookup
+updateEvaluateState4 : Int -> Int -> Int -> Int -> BlockLength -> Int -> Array Int -> State -> State
+updateEvaluateState4 j copyLength insertLength distanceCode blockLength commandTreeIdx rings orig =
+    { ringBuffer = orig.ringBuffer
+    , contextModes = orig.contextModes
+    , contextMap = orig.contextMap
+    , distContextMap = orig.distContextMap
+    , distExtraBits = orig.distExtraBits
+    , byteBuffer = orig.byteBuffer
+    , shortBuffer = orig.shortBuffer
+    , rings = rings
+    , blockTrees = orig.blockTrees
+    , treeGroup = orig.treeGroup
+    , distOffset = orig.distOffset
+    , accumulator32 = orig.accumulator32
+    , bitOffset = orig.bitOffset
+    , halfOffset = orig.halfOffset
+    , tailBytes = orig.tailBytes
+    , metaBlockLength = orig.metaBlockLength
+    , num = orig.num
+    , blockLength = blockLength
 
-                                    copyLengthOffset =
-                                        Array.Helpers.unsafeGet (cmdCode + 2) Constants.cmd_lookup
-
-                                    readLengths state =
-                                        let
-                                            extraBits1 =
-                                                Bitwise.and insertAndCopyExtraBits 0xFF
-
-                                            extraBits2 =
-                                                Bitwise.shiftRightBy 8 insertAndCopyExtraBits
-                                        in
-                                        readBits2 extraBits1 extraBits2 state
-
-                                    ( s5, insertLengthBits, copyLengthBits ) =
-                                        readLengths s3
-                                in
-                                Ok
-                                    ( 7
-                                    , nextRunningState
-                                    , updateEvaluateState4
-                                        0
-                                        (copyLengthBits + copyLengthOffset)
-                                        (insertLengthBits + insertLengthOffset)
-                                        (Array.Helpers.unsafeGet (cmdCode + 3) Constants.cmd_lookup)
-                                        (s3.blockLength.commandBlockLength - 1)
-                                        s5
-                                    )
+    {-
+       , blockLength =
+           let
+               oldBlockLength =
+                   orig.blockLength
+           in
+           { literalBlockLength = oldBlockLength.literalBlockLength
+           , commandBlockLength = commandBlockLength
+           , distanceBlockLength = oldBlockLength.distanceBlockLength
+           }
+    -}
+    , pos = orig.pos
+    , maxDistance = orig.maxDistance
+    , distRbIdx = orig.distRbIdx
+    , isTrivialLiteralContext = orig.isTrivialLiteralContext
+    , literalTreeIdx = orig.literalTreeIdx
+    , commandTreeIdx = commandTreeIdx
+    , j = j
+    , insertLength = insertLength
+    , contextMapSlice = orig.contextMapSlice
+    , distContextMapSlice = orig.distContextMapSlice
+    , contextLookup = orig.contextLookup
+    , distanceCode = distanceCode
+    , distanceConstants = orig.distanceConstants
+    , distance = orig.distance
+    , copyLength = copyLength
+    , maxBackwardDistance = orig.maxBackwardDistance
+    , maxRingBufferSize = orig.maxRingBufferSize
+    , ringBufferSize = orig.ringBufferSize
+    , expectedTotalSize = orig.expectedTotalSize
+    , flags = orig.flags
+    , input = orig.input
+    }
 
 
 maybeLiteral : State -> State
@@ -2809,7 +2879,7 @@ decodeDistanceBlockSwitch s0 =
     }
 
 
-decodeCommandBlockSwitch : State -> State
+decodeCommandBlockSwitch : State -> ( State, { blockLength : BlockLength, commandTreeIdx : Int, rings : Array Int } )
 decodeCommandBlockSwitch s0 =
     let
         ( s1, newRings, v ) =
@@ -2824,11 +2894,12 @@ decodeCommandBlockSwitch s0 =
             , distanceBlockLength = oldBlockLength.distanceBlockLength
             }
     in
-    { s1
-        | blockLength = newBlockLength
-        , commandTreeIdx = Array.Helpers.unsafeGet 7 newRings
-        , rings = newRings
-    }
+    ( s1
+    , { blockLength = newBlockLength
+      , commandTreeIdx = Array.Helpers.unsafeGet 7 newRings
+      , rings = newRings
+      }
+    )
 
 
 decodeBlockTypeAndLength : Int -> Int -> State -> ( State, Array Int, Int )
@@ -2839,37 +2910,38 @@ decodeBlockTypeAndLength treeType numBlockTypes s0 =
 
         s1 =
             topUpAccumulator s0
+
+        ( s2, initialBlockType ) =
+            readSymbol s1.blockTrees (2 * treeType) s1
+
+        ( s3, result ) =
+            readBlockLength s2.blockTrees (2 * treeType + 1) s2
+
+        blockType =
+            (case initialBlockType of
+                1 ->
+                    Array.Helpers.unsafeGet (offset + 1) s3.rings + 1
+
+                0 ->
+                    Array.Helpers.unsafeGet offset s3.rings
+
+                other ->
+                    other - 2
+            )
+                |> (\v ->
+                        if v >= numBlockTypes then
+                            v - numBlockTypes
+
+                        else
+                            v
+                   )
     in
-    case readSymbol s1.blockTrees (2 * treeType) s1 of
-        ( s2, initialBlockType ) ->
-            case readBlockLength s2.blockTrees (2 * treeType + 1) s2 of
-                ( s3, result ) ->
-                    let
-                        blockType =
-                            (case initialBlockType of
-                                1 ->
-                                    Array.Helpers.unsafeGet (offset + 1) s3.rings + 1
-
-                                0 ->
-                                    Array.Helpers.unsafeGet offset s3.rings
-
-                                other ->
-                                    other - 2
-                            )
-                                |> (\v ->
-                                        if v >= numBlockTypes then
-                                            v - numBlockTypes
-
-                                        else
-                                            v
-                                   )
-                    in
-                    ( s3
-                    , s3.rings
-                        |> Array.set offset (Array.Helpers.unsafeGet (offset + 1) s3.rings)
-                        |> Array.set (offset + 1) blockType
-                    , result
-                    )
+    ( s3
+    , s3.rings
+        |> Array.set offset (Array.Helpers.unsafeGet (offset + 1) s3.rings)
+        |> Array.set (offset + 1) blockType
+    , result
+    )
 
 
 calculateFence : State -> Int
@@ -2982,13 +3054,7 @@ readBits nbits state =
         ( updateAccumulator newerBitOffset newHalfOffset newAccumulator32 state, val )
 
     else
-        readManyBits nbits
-            (if state.bitOffset >= 16 then
-                putOnAccumulator state
-
-             else
-                state
-            )
+        readManyBits nbits state
 
 
 pureReadFewBits : Int -> Int -> Int -> ( Int, Int )
@@ -3033,7 +3099,7 @@ readFewBitsSafe nbits state =
 
 readManyBits : Int -> State -> ( State, Int )
 readManyBits n inputS =
-    case readFewBits 16 inputS of
+    case readFewBitsSafe 16 inputS of
         ( s, low ) ->
             let
                 newAccumulator32 =
@@ -3449,58 +3515,6 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos orig =
     , distanceConstants = orig.distanceConstants
     , distance = orig.distance
     , copyLength = orig.copyLength
-    , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
-    , flags = orig.flags
-    , input = orig.input
-    }
-
-
-updateEvaluateState4 : Int -> Int -> Int -> Int -> Int -> State -> State
-updateEvaluateState4 j copyLength insertLength distanceCode commandBlockLength orig =
-    { ringBuffer = orig.ringBuffer
-    , contextModes = orig.contextModes
-    , contextMap = orig.contextMap
-    , distContextMap = orig.distContextMap
-    , distExtraBits = orig.distExtraBits
-    , byteBuffer = orig.byteBuffer
-    , shortBuffer = orig.shortBuffer
-    , rings = orig.rings
-    , blockTrees = orig.blockTrees
-    , treeGroup = orig.treeGroup
-    , distOffset = orig.distOffset
-    , accumulator32 = orig.accumulator32
-    , bitOffset = orig.bitOffset
-    , halfOffset = orig.halfOffset
-    , tailBytes = orig.tailBytes
-    , metaBlockLength = orig.metaBlockLength
-    , num = orig.num
-    , blockLength =
-        let
-            oldBlockLength =
-                orig.blockLength
-        in
-        { literalBlockLength = oldBlockLength.literalBlockLength
-        , commandBlockLength = commandBlockLength
-        , distanceBlockLength = oldBlockLength.distanceBlockLength
-        }
-    , pos = orig.pos
-    , maxDistance = orig.maxDistance
-    , distRbIdx = orig.distRbIdx
-    , isTrivialLiteralContext = orig.isTrivialLiteralContext
-    , literalTreeIdx = orig.literalTreeIdx
-    , commandTreeIdx = orig.commandTreeIdx
-    , j = j
-    , insertLength = insertLength
-    , contextMapSlice = orig.contextMapSlice
-    , distContextMapSlice = orig.distContextMapSlice
-    , contextLookup = orig.contextLookup
-    , distanceCode = distanceCode
-    , distanceConstants = orig.distanceConstants
-    , distance = orig.distance
-    , copyLength = copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
     , maxRingBufferSize = orig.maxRingBufferSize
     , ringBufferSize = orig.ringBufferSize
