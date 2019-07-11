@@ -343,8 +343,8 @@ type alias InputStream =
     }
 
 
-readNextMetablockHeader : ( Int, Int, State ) -> Result Error ( Int, Int, State )
-readNextMetablockHeader ( runningState, nextRunningState, s ) =
+readNextMetablockHeader : Int -> Int -> State -> Result Error ( Int, Int, State )
+readNextMetablockHeader runningState nextRunningState s =
     if s.flags.inputEnd then
         Ok ( 13, 10, s )
 
@@ -745,32 +745,50 @@ readMetablockPartition treeType numBlockTypes s =
 readSymbol : Array Int -> Int -> State -> ( State, Int )
 readSymbol tableGroup tableIdx s =
     let
-        ( newBitOffset, sym ) =
-            readSymbolPure tableGroup tableIdx s
+        ( bitOffset1, halfOffset1, accumulator32_1 ) =
+            if s.bitOffset >= 16 then
+                let
+                    next =
+                        Array.get s.halfOffset s.shortBuffer
+                            |> Maybe.withDefault 0
+                            |> Bitwise.shiftLeftBy 16
+                in
+                ( s.bitOffset - 16, s.halfOffset + 1, Bitwise.or next (Bitwise.shiftRightZfBy 16 s.accumulator32) )
+
+            else
+                ( s.bitOffset, s.halfOffset, s.accumulator32 )
+
+        ( bitOffset2, sym ) =
+            readSymbolPureLowlevel bitOffset1 accumulator32_1 tableGroup tableIdx
     in
-    ( updateBitOffset newBitOffset s, sym )
+    ( updateAccumulator bitOffset2 halfOffset1 accumulator32_1 s, sym )
 
 
 readSymbolPure : Array Int -> Int -> State -> ( Int, Int )
 readSymbolPure tableGroup tableIdx s =
-    let
-        readTableGroup index =
-            Array.Helpers.unsafeGet index tableGroup
+    readSymbolPureLowlevel s.bitOffset s.accumulator32 tableGroup tableIdx
 
+
+readSymbolPureLowlevel : Int -> Int -> Array Int -> Int -> ( Int, Int )
+readSymbolPureLowlevel bitOffset accumulator32 tableGroup tableIdx =
+    let
         offset =
-            readTableGroup tableIdx + Bitwise.and val 0xFF
+            Array.Helpers.unsafeGet tableIdx tableGroup + Bitwise.and val 0xFF
 
         val =
-            Bitwise.shiftRightZfBy s.bitOffset s.accumulator32
+            Bitwise.shiftRightZfBy bitOffset accumulator32
+
+        tableValue1 =
+            Array.Helpers.unsafeGet offset tableGroup
 
         bits =
-            Bitwise.shiftRightBy 16 (readTableGroup offset)
+            Bitwise.shiftRightBy 16 tableValue1
 
         sym =
-            Bitwise.and (readTableGroup offset) 0xFFFF
+            Bitwise.and tableValue1 0xFFFF
     in
     if bits <= 8 then
-        ( s.bitOffset + bits, sym )
+        ( bitOffset + bits, sym )
 
     else
         let
@@ -783,11 +801,14 @@ readSymbolPure tableGroup tableIdx s =
             offset3 =
                 offset2 + Bitwise.shiftRightZfBy 8 (Bitwise.and val mask)
 
+            tableValue2 =
+                Array.Helpers.unsafeGet offset3 tableGroup
+
             newBitOffset =
-                s.bitOffset + 8 + Bitwise.shiftRightBy 16 (readTableGroup offset3)
+                bitOffset + 8 + Bitwise.shiftRightBy 16 tableValue2
 
             result =
-                Bitwise.and (readTableGroup offset3) 0xFFFF
+                Bitwise.and tableValue2 0xFFFF
         in
         ( newBitOffset, result )
 
@@ -1420,11 +1441,8 @@ finalize sorted rootBits ({ count, len, key, symbol, step, currentTableGroup, cu
 readBlockLength : Array Int -> Int -> State -> ( State, Int )
 readBlockLength tableGroup tableIdx s0 =
     let
-        s1 =
-            topUpAccumulator s0
-
         ( s2, code ) =
-            readSymbol tableGroup tableIdx s1
+            readSymbol tableGroup tableIdx s0
 
         n =
             Array.Helpers.unsafeGet code Constants.block_length_n_bits
@@ -1740,7 +1758,7 @@ decodeContextMap contextMapSize contextMap s0 =
 
                                     go i currentContextMap s =
                                         if i < contextMapSize then
-                                            case maybeReadMoreInput 2030 s |> Result.map (topUpAccumulator >> readSymbol table.tableGroup tableIdx) of
+                                            case maybeReadMoreInput 2030 s |> Result.map (readSymbol table.tableGroup tableIdx) of
                                                 Err e ->
                                                     Err e
 
@@ -1878,7 +1896,7 @@ decompress written ( runningState, nextRunningState, s ) =
         Err (CustomError "use evaluateState1 first")
 
     else
-        case decompressHelp { fence = calculateFence s, ringBufferMask = s.ringBufferSize - 1 } written ( runningState, nextRunningState, s ) of
+        case decompressHelp { fence = calculateFence s, ringBufferMask = s.ringBufferSize - 1 } written runningState nextRunningState s of
             Err e ->
                 Err e
 
@@ -1906,8 +1924,8 @@ type alias Written =
     }
 
 
-decompressHelp : Context -> Written -> ( Int, Int, State ) -> Result Error ( ( Int, Int, State ), Context, Written )
-decompressHelp context written ( runningState, nextRunningState, s ) =
+decompressHelp : Context -> Written -> Int -> Int -> State -> Result Error ( ( Int, Int, State ), Context, Written )
+decompressHelp context written runningState nextRunningState s =
     let
         _ =
             -- Debug.log "state" ( s.runningState, ( s.pos, s.bitOffset, s.accumulator32 ) )
@@ -1922,7 +1940,7 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                 Err InvalidMetablockLength
 
             else
-                case readNextMetablockHeader ( runningState, nextRunningState, s ) of
+                case readNextMetablockHeader runningState nextRunningState s of
                     Err e ->
                         Err e
 
@@ -1931,7 +1949,7 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                             fence =
                                 calculateFence s2
                         in
-                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written ( newRunningState, newNextRunningState, s2 )
+                        decompressHelp { fence = fence, ringBufferMask = s2.ringBufferSize - 1 } written newRunningState newNextRunningState s2
 
         3 ->
             case readMetablockHuffmanCodesAndContextMaps s of
@@ -1939,22 +1957,22 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                     Err e
 
                 Ok s2 ->
-                    decompressHelp context written ( 4, nextRunningState, s2 )
+                    decompressHelp context written 4 nextRunningState s2
 
         4 ->
-            case evaluateState4 ( runningState, nextRunningState, s ) of
+            case evaluateState4 runningState nextRunningState s of
                 Err e ->
                     Err e
 
                 Ok ( newRunningState, newNextRunningState, newState ) ->
-                    decompressHelp context written ( newRunningState, newNextRunningState, newState )
+                    decompressHelp context written newRunningState newNextRunningState newState
 
         7 ->
             if s.isTrivialLiteralContext then
                 let
                     go s0 =
                         if s0.j < s0.insertLength then
-                            case maybeReadMoreInput 2030 s0 |> Result.map (maybeLiteral >> topUpAccumulator) of
+                            case maybeReadMoreInput 2030 s0 |> Result.map maybeLiteral of
                                 Err e ->
                                     Err e
 
@@ -2002,7 +2020,7 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                         Err e
 
                     Ok ( newRunningState, newNextRunningState, newState ) ->
-                        decompressHelp context written ( newRunningState, newNextRunningState, newState )
+                        decompressHelp context written newRunningState newNextRunningState newState
 
             else
                 let
@@ -2019,14 +2037,14 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                         Err e
 
                     Ok ( newRunningState, newNextRunningState, newState ) ->
-                        decompressHelp context written ( newRunningState, newNextRunningState, newState )
+                        decompressHelp context written newRunningState newNextRunningState newState
 
         8 ->
             let
                 ( newRunningState, newNextRunningState, newState ) =
                     evaluateState8 context ( runningState, nextRunningState, s )
             in
-            decompressHelp context written ( newRunningState, newNextRunningState, newState )
+            decompressHelp context written newRunningState newNextRunningState newState
 
         9 ->
             if s.distance > 0x7FFFFFFC then
@@ -2068,14 +2086,14 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                             newState =
                                 updateEvaluateState9 newRingBuffer (s.pos + len) newMetaBlockLength s
                         in
-                        decompressHelp context written ( 4, 13, newState )
+                        decompressHelp context written 13 4 newState
 
                     else
                         let
                             newState =
                                 updateEvaluateState9 newRingBuffer (s.pos + len) newMetaBlockLength s
                         in
-                        decompressHelp context written ( 4, nextRunningState, newState )
+                        decompressHelp context written 4 nextRunningState newState
 
                 else
                     Err (InvalidBackwardReference ("the transform index is " ++ String.fromInt transformIdx ++ ", but it must be smaller than 121"))
@@ -2089,7 +2107,7 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                     Err e
 
                 Ok ( newRunningState, newNextRunningState, newState ) ->
-                    decompressHelp context written ( newRunningState, newNextRunningState, newState )
+                    decompressHelp context written newRunningState newNextRunningState newState
 
         12 ->
             -- should not happen, go directly to state 13
@@ -2097,7 +2115,7 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                 newState =
                     s
             in
-            decompressHelp context written ( runningState, nextRunningState, newState )
+            decompressHelp context written runningState nextRunningState newState
 
         13 ->
             let
@@ -2124,8 +2142,6 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                         newState =
                             { s
                                 | pos = Bitwise.and s.pos context.ringBufferMask
-
-                                -- , runningState = s.nextRunningState
                                 , ringBuffer = newRingBuffer
                                 , maxDistance = newMaxDistance
                             }
@@ -2133,22 +2149,22 @@ decompressHelp context written ( runningState, nextRunningState, s ) =
                         newerWritten =
                             { fromRingBuffer = 0, toOutput = newWritten.toOutput, output = newWritten.output }
                     in
-                    -- not a type, switches to the next running state
-                    decompressHelp context newerWritten ( nextRunningState, nextRunningState, newState )
+                    -- not a typo, switches to the next running state
+                    decompressHelp context newerWritten nextRunningState nextRunningState newState
 
                 else
                     let
                         newState =
                             { s | maxDistance = newMaxDistance }
                     in
-                    decompressHelp context newWritten ( nextRunningState, nextRunningState, newState )
+                    decompressHelp context newWritten nextRunningState nextRunningState newState
 
         _ ->
             Ok ( ( runningState, nextRunningState, s ), context, written )
 
 
-evaluateState4 : ( Int, Int, State ) -> Result Error ( Int, Int, State )
-evaluateState4 ( runningState, nextRunningState, s ) =
+evaluateState4 : Int -> Int -> State -> Result Error ( Int, Int, State )
+evaluateState4 runningState nextRunningState s =
     if s.metaBlockLength <= 0 then
         Ok ( 2, nextRunningState, s )
 
@@ -2192,7 +2208,7 @@ evaluateState4 ( runningState, nextRunningState, s ) =
                 in
                 let
                     ( s3, v ) =
-                        s2 |> topUpAccumulator |> readSymbol s2.treeGroup.commandTreeGroup commandBlockData.commandTreeIdx
+                        readSymbol s2.treeGroup.commandTreeGroup commandBlockData.commandTreeIdx s2
 
                     cmdCode =
                         Bitwise.shiftLeftBy 2 v
@@ -2389,6 +2405,13 @@ evaluateState8 context ( runningState, nextRunningState, s ) =
 
         dstEnd =
             dst + copyLength
+
+        _ =
+            if dstEnd < s.pos then
+                ( 1, 1 )
+
+            else
+                Debug.log "bad?" ( dstEnd, s.pos )
     in
     if (srcEnd < context.ringBufferMask) && (dstEnd < context.ringBufferMask) then
         let
@@ -2545,15 +2568,15 @@ copyBytesToRingBuffer offset length data s =
 
     else
         let
-            loop1 state currentOffset currentLength accum =
-                if state.bitOffset /= 32 && currentLength /= 0 then
-                    loop1 { state | bitOffset = state.bitOffset + 8 } (currentOffset + 1) (currentLength - 1) (Array.set currentOffset (Bitwise.shiftRightZfBy state.bitOffset state.accumulator32) accum)
+            loop1 state bitOffset currentOffset currentLength accum =
+                if bitOffset /= 32 && currentLength /= 0 then
+                    loop1 state (bitOffset + 8) (currentOffset + 1) (currentLength - 1) (Array.set currentOffset (Bitwise.shiftRightZfBy bitOffset state.accumulator32) accum)
 
                 else
-                    ( state, ( currentOffset, currentLength ), accum )
+                    ( updateBitOffset bitOffset state, ( currentOffset, currentLength ), accum )
 
             ( s1, ( offset1, length1 ), data1 ) =
-                loop1 s offset length data
+                loop1 s s.bitOffset offset length data
 
             maybeCopyNibbles state currentOffset currentLength accum =
                 let
@@ -2707,7 +2730,7 @@ remainder7 ( runningState, nextRunningState, s ) =
                                 else
                                     state
                         in
-                        case maybeReadMoreInput 2030 s1 |> Result.map (maybeDistance >> topUpAccumulator) of
+                        case maybeReadMoreInput 2030 s1 |> Result.map maybeDistance of
                             Err e ->
                                 Err e
 
@@ -2927,11 +2950,8 @@ decodeBlockTypeAndLength treeType numBlockTypes s0 =
         offset =
             4 + treeType * 2
 
-        s1 =
-            topUpAccumulator s0
-
         ( s2, initialBlockType ) =
-            readSymbol s1.blockTrees (2 * treeType) s1
+            readSymbol s0.blockTrees (2 * treeType) s0
 
         ( s3, result ) =
             readBlockLength s2.blockTrees (2 * treeType + 1) s2

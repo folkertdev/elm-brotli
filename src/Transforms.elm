@@ -126,13 +126,6 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
         len1 =
             len - (omitFirst + omitLast)
 
-        go1 i currentOffset currentSourceOffset accum =
-            if i > 0 then
-                go1 (i - 1) (currentOffset + 1) (currentSourceOffset + 1) (Array.set currentOffset (Array.Helpers.unsafeGet currentSourceOffset src) accum)
-
-            else
-                ( currentOffset, currentSourceOffset, accum )
-
         prefixSuffixLoop currentSuffix fixEnd currentOffset accum =
             if currentSuffix < fixEnd then
                 case Array.get currentSuffix prefixSuffixStorage of
@@ -211,21 +204,35 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
                         accum
             in
             go inputLen_ (currentOffset - inputLen_) (Bitwise.and param 0x7FFF + (0x01000000 - Bitwise.and param 0x8000))
+
+        go1 i currentOffset currentSourceOffset accum =
+            if i > 0 then
+                go1 (i - 1) (currentOffset + 1) (currentSourceOffset + 1) (Array.set currentOffset (Array.Helpers.unsafeGet currentSourceOffset src) accum)
+
+            else
+                ( currentOffset, accum )
     in
-    prefixSuffixLoop prefix prefixEnd offset dst
-        |> (\( newOffset, newAccum ) -> go1 len1 newOffset srcOffset newAccum)
-        |> (\( newOffset, _, newAccum ) ->
-                if transformType == 10 || transformType == 11 then
-                    ( newOffset, applyTransform1 len1 newOffset newAccum )
+    let
+        ( offset1, accum1 ) =
+            prefixSuffixLoop prefix prefixEnd offset dst
 
-                else if transformType == 21 || transformType == 22 then
-                    ( newOffset, applyTransform2 len1 newOffset newAccum )
+        ( offset2, accum2 ) =
+            go1 len1 offset1 srcOffset accum1
 
-                else
-                    ( newOffset, newAccum )
-           )
-        |> (\( newOffset, newAccum ) -> prefixSuffixLoop suffix suffixEnd newOffset newAccum)
-        |> (\( newOffset, newAccum ) -> ( newAccum, newOffset - dstOffset ))
+        accum3 =
+            if transformType == 10 || transformType == 11 then
+                applyTransform1 len1 offset2 accum2
+
+            else if transformType == 21 || transformType == 22 then
+                applyTransform2 len1 offset2 accum2
+
+            else
+                accum2
+
+        ( offset4, accum4 ) =
+            prefixSuffixLoop suffix suffixEnd offset2 accum3
+    in
+    ( accum4, offset4 - dstOffset )
 
 
 transform20Helper : Int -> Int -> Int -> Int -> Array Int -> { scalar : Int, step : Int, dst : Array Int }
