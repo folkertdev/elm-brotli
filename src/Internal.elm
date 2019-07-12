@@ -255,9 +255,7 @@ initBitReader s =
             { oldFlags | endOfStreamReached = False }
     in
     { s
-        | byteBuffer = Array.repeat 4160 0
-        , accumulator32 = 0
-        , shortBuffer = Array.repeat 2080 0
+        | accumulator32 = 0
         , bitOffset = 32
         , halfOffset = 2048
         , flags = newFlags
@@ -2076,12 +2074,11 @@ decompressHelp context written runningState nextRunningState s =
                 in
                 if position >= RingBuffer.size s.ringBuffer then
                     let
-                        newRingBuffer_ =
-                            -- wth is going on here?
-                            RingBuffer.copyWithin 0 (RingBuffer.size s.ringBuffer) position s.ringBuffer
-
                         newRingBuffer =
-                            RingBuffer.reslice (Bitwise.and position context.ringBufferMask) newRingBuffer_
+                            s.ringBuffer
+                                -- copy used slack area to the front
+                                |> RingBuffer.copyWithin 0 (RingBuffer.size s.ringBuffer) position
+                                |> RingBuffer.reslice (Bitwise.and position context.ringBufferMask)
 
                         newState =
                             { s
@@ -3051,7 +3048,8 @@ doReadMoreInput s =
                 4096 - readOffset
 
             byteBuffer =
-                Array.Helpers.copyWithin 0 readOffset 4096 s.byteBuffer
+                -- Array.Helpers.copyWithin 0 readOffset 4096 s.byteBuffer
+                Array.slice readOffset 4096 s.byteBuffer
         in
         -- @optimize replace record update?
         case doReadMoreInputHelp bytesInBuffer { s | byteBuffer = byteBuffer, halfOffset = 0 } of
@@ -3160,7 +3158,9 @@ readInput offset length s =
                     { oldInput | offset = oldInput.offset + bytesRead }
 
                 newByteBuffer =
-                    Array.Helpers.setSlice newSegment offset s.byteBuffer
+                    Array.append s.byteBuffer newSegment
+
+                -- Array.Helpers.setSlice newSegment offset s.byteBuffer
             in
             Ok ( { s | input = newInput, byteBuffer = newByteBuffer }, bytesRead )
 
