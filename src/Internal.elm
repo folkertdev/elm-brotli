@@ -77,7 +77,6 @@ type alias State =
     , metaBlockLength : Int
     , num : Num
     , blockLength : BlockLength
-    , pos : Int
     , distRbIdx : Int
     , isTrivialLiteralContext : Bool
     , literalTreeIdx : Int
@@ -93,9 +92,6 @@ type alias State =
     , copyLength : Int
     , maxDistance : Int
     , maxBackwardDistance : Int
-    , maxRingBufferSize : Int
-    , ringBufferSize : Int
-    , expectedTotalSize : Int
     , input : InputStream
     , flags : Flags
     }
@@ -163,7 +159,6 @@ defaultState buffer =
         , commandBlockLength = 0
         , distanceBlockLength = 0
         }
-    , pos = 0
     , maxDistance = 0
     , distRbIdx = 0
     , isTrivialLiteralContext = False
@@ -182,9 +177,6 @@ defaultState buffer =
     , distance = 0
     , copyLength = 0
     , maxBackwardDistance = 0
-    , maxRingBufferSize = 0
-    , ringBufferSize = 0
-    , expectedTotalSize = 0
     , input = { offset = 0, buffer = buffer }
     , flags = defaultFlags
     }
@@ -401,7 +393,7 @@ readNextMetablockHeader runningState nextRunningState s =
                                         newRingBuffer =
                                             RingBuffer.updateExpectation s6.flags s6.metaBlockLength s6.ringBuffer
                                     in
-                                    Ok ( newRunningState, nextRunningState, { s6 | ringBuffer = newRingBuffer, ringBufferSize = RingBuffer.size newRingBuffer, maxRingBufferSize = RingBuffer.maxSize newRingBuffer } )
+                                    Ok ( newRunningState, nextRunningState, { s6 | ringBuffer = newRingBuffer } )
                 )
 
 
@@ -1825,7 +1817,6 @@ evaluateState1 ( runningState, nextRunningState, s ) =
                     , nextRunningState
                     , { newS
                         | ringBuffer = RingBuffer.resize maxRingBufferSize newS.ringBuffer
-                        , maxRingBufferSize = maxRingBufferSize
                         , maxBackwardDistance = Bitwise.shiftLeftBy windowBits 1 - 16
                       }
                     )
@@ -1931,11 +1922,8 @@ decompressHelp context written runningState nextRunningState s =
                                                 newRingBuffer =
                                                     -- RingBuffer.set s1.pos value s1.ringBuffer
                                                     RingBuffer.push value s1.ringBuffer
-
-                                                newPos =
-                                                    s1.pos + 1
                                             in
-                                            if newPos >= context.fence then
+                                            if RingBuffer.position newRingBuffer >= context.fence then
                                                 let
                                                     oldBlockLengths =
                                                         s1.blockLength
@@ -1946,10 +1934,10 @@ decompressHelp context written runningState nextRunningState s =
                                                         , distanceBlockLength = oldBlockLengths.distanceBlockLength
                                                         }
                                                 in
-                                                Ok ( 13, 7, { s1 | bitOffset = newBitOffset, pos = s1.pos + 1, j = s1.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths } )
+                                                Ok ( 13, 7, { s1 | bitOffset = newBitOffset, j = s1.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths } )
 
                                             else
-                                                go (copyState7 newBitOffset newPos (s1.j + 1) newRingBuffer (s1.blockLength.literalBlockLength - 1) s1)
+                                                go (copyState7 newBitOffset (s1.j + 1) newRingBuffer (s1.blockLength.literalBlockLength - 1) s1)
 
                         else
                             let
@@ -1973,12 +1961,15 @@ decompressHelp context written runningState nextRunningState s =
 
             else
                 let
+                    pos =
+                        RingBuffer.position s.ringBuffer
+
                     init_prevByte1 =
-                        RingBuffer.get (Bitwise.and (s.pos - 1) context.ringBufferMask) s.ringBuffer
+                        RingBuffer.get (Bitwise.and (pos - 1) context.ringBufferMask) s.ringBuffer
                             |> Bitwise.and 0xFF
 
                     init_prevByte2 =
-                        RingBuffer.get (Bitwise.and (s.pos - 2) context.ringBufferMask) s.ringBuffer
+                        RingBuffer.get (Bitwise.and (pos - 2) context.ringBufferMask) s.ringBuffer
                             |> Bitwise.and 0xFF
                 in
                 case evaluateState7 context init_prevByte1 init_prevByte2 runningState nextRunningState s of
@@ -2022,25 +2013,22 @@ decompressHelp context written runningState nextRunningState s =
                 if transformIdx < 121 then
                     let
                         ( newRingBuffer, len ) =
-                            Transforms.transformDictionaryWord s.ringBuffer s.pos Constants.dictionary_data offset s.copyLength Transforms.rfc_transforms transformIdx
+                            Transforms.transformDictionaryWord s.ringBuffer (RingBuffer.position s.ringBuffer) Constants.dictionary_data offset s.copyLength Transforms.rfc_transforms transformIdx
 
                         newMetaBlockLength =
                             s.metaBlockLength - len
-
-                        newPos =
-                            s.pos + len
                     in
-                    if newPos >= context.fence then
+                    if RingBuffer.position newRingBuffer >= context.fence then
                         let
                             newState =
-                                updateEvaluateState9 newRingBuffer (s.pos + len) newMetaBlockLength s
+                                updateEvaluateState9 newRingBuffer newMetaBlockLength s
                         in
                         decompressHelp context written 13 4 newState
 
                     else
                         let
                             newState =
-                                updateEvaluateState9 newRingBuffer (s.pos + len) newMetaBlockLength s
+                                updateEvaluateState9 newRingBuffer newMetaBlockLength s
                         in
                         decompressHelp context written 4 nextRunningState newState
 
@@ -2068,8 +2056,11 @@ decompressHelp context written runningState nextRunningState s =
 
         13 ->
             let
+                position =
+                    RingBuffer.position s.ringBuffer
+
                 ( wasWritten, newWritten ) =
-                    writeRingBuffer (min s.pos (RingBuffer.size s.ringBuffer)) written s
+                    writeRingBuffer (min position (RingBuffer.size s.ringBuffer)) written s
             in
             if not wasWritten then
                 Ok ( ( runningState, nextRunningState, s ), context, newWritten )
@@ -2077,25 +2068,24 @@ decompressHelp context written runningState nextRunningState s =
             else
                 let
                     newMaxDistance =
-                        if s.pos >= s.maxBackwardDistance then
+                        if position >= s.maxBackwardDistance then
                             s.maxBackwardDistance
 
                         else
                             s.maxDistance
                 in
-                if s.pos >= RingBuffer.size s.ringBuffer then
+                if position >= RingBuffer.size s.ringBuffer then
                     let
                         newRingBuffer_ =
                             -- wth is going on here?
-                            RingBuffer.copyWithin 0 (RingBuffer.size s.ringBuffer) s.pos s.ringBuffer
+                            RingBuffer.copyWithin 0 (RingBuffer.size s.ringBuffer) position s.ringBuffer
 
                         newRingBuffer =
-                            RingBuffer.reslice (Bitwise.and s.pos context.ringBufferMask) newRingBuffer_
+                            RingBuffer.reslice (Bitwise.and position context.ringBufferMask) newRingBuffer_
 
                         newState =
                             { s
-                                | pos = Bitwise.and s.pos context.ringBufferMask
-                                , ringBuffer = newRingBuffer
+                                | ringBuffer = newRingBuffer
                                 , maxDistance = newMaxDistance
                             }
 
@@ -2230,19 +2220,6 @@ updateEvaluateState4 j copyLength insertLength distanceCode blockLength commandT
     , metaBlockLength = orig.metaBlockLength
     , num = orig.num
     , blockLength = blockLength
-
-    {-
-       , blockLength =
-           let
-               oldBlockLength =
-                   orig.blockLength
-           in
-           { literalBlockLength = oldBlockLength.literalBlockLength
-           , commandBlockLength = commandBlockLength
-           , distanceBlockLength = oldBlockLength.distanceBlockLength
-           }
-    -}
-    , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
     , isTrivialLiteralContext = orig.isTrivialLiteralContext
@@ -2258,9 +2235,6 @@ updateEvaluateState4 j copyLength insertLength distanceCode blockLength commandT
     , distance = orig.distance
     , copyLength = copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
     , flags = orig.flags
     , input = orig.input
     }
@@ -2318,11 +2292,8 @@ evaluateState7 context prevByte1 prevByte2 runningState nextRunningState s0 =
                             newRingBuffer =
                                 -- RingBuffer.set s2.pos byte1 s2.ringBuffer
                                 RingBuffer.push byte1 s2.ringBuffer
-
-                            newPos =
-                                s2.pos + 1
                         in
-                        if newPos >= context.fence then
+                        if RingBuffer.position newRingBuffer >= context.fence then
                             let
                                 oldBlockLengths =
                                     s2.blockLength
@@ -2333,10 +2304,10 @@ evaluateState7 context prevByte1 prevByte2 runningState nextRunningState s0 =
                                     , distanceBlockLength = oldBlockLengths.distanceBlockLength
                                     }
                             in
-                            Ok ( 13, 7, { s2 | bitOffset = newBitOffset, pos = newPos, j = s2.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths } )
+                            Ok ( 13, 7, { s2 | bitOffset = newBitOffset, j = s2.j + 1, ringBuffer = newRingBuffer, blockLength = newBlockLengths } )
 
                         else
-                            evaluateState7 context byte1 byte2 runningState nextRunningState (copyState7 newBitOffset newPos (s2.j + 1) newRingBuffer (s2.blockLength.literalBlockLength - 1) s2)
+                            evaluateState7 context byte1 byte2 runningState nextRunningState (copyState7 newBitOffset (s2.j + 1) newRingBuffer (s2.blockLength.literalBlockLength - 1) s2)
 
     else
         remainder7 ( runningState, nextRunningState, s0 )
@@ -2346,10 +2317,10 @@ evaluateState8 : Context -> ( Int, Int, State ) -> ( Int, Int, State )
 evaluateState8 context ( runningState, nextRunningState, s ) =
     let
         src =
-            Bitwise.and (s.pos - s.distance) context.ringBufferMask
+            Bitwise.and (RingBuffer.position s.ringBuffer - s.distance) context.ringBufferMask
 
         dst =
-            s.pos
+            RingBuffer.position s.ringBuffer
 
         copyLength =
             s.copyLength - s.j
@@ -2375,27 +2346,25 @@ evaluateState8 context ( runningState, nextRunningState, s ) =
             newRingBuffer
             (s.j + copyLength)
             (s.metaBlockLength - copyLength)
-            (s.pos + copyLength)
             s
         )
 
     else
         -- NOTE this branch is untested; seems to almost never get hit
         let
-            go : Int -> { ringBuffer : RingBuffer, metaBlockLength : Int, pos : Int, j : Int } -> { ringBuffer : RingBuffer, metaBlockLength : Int, pos : Int, j : Int }
+            go : Int -> { ringBuffer : RingBuffer, metaBlockLength : Int, j : Int } -> { ringBuffer : RingBuffer, metaBlockLength : Int, j : Int }
             go distance state =
                 let
                     s1 =
                         { ringBuffer =
                             state.ringBuffer
                                 -- |> RingBuffer.set state.pos (RingBuffer.get (Bitwise.and (state.pos - distance) context.ringBufferMask) state.ringBuffer)
-                                |> RingBuffer.push (RingBuffer.get (Bitwise.and (state.pos - distance) context.ringBufferMask) state.ringBuffer)
+                                |> RingBuffer.push (RingBuffer.get (Bitwise.and (RingBuffer.position state.ringBuffer - distance) context.ringBufferMask) state.ringBuffer)
                         , metaBlockLength = state.metaBlockLength - 1
-                        , pos = state.pos + 1
                         , j = state.j + 1
                         }
                 in
-                if s1.pos >= context.fence then
+                if RingBuffer.position s1.ringBuffer >= context.fence then
                     s1
 
                 else
@@ -2404,7 +2373,6 @@ evaluateState8 context ( runningState, nextRunningState, s ) =
             smallerState =
                 { ringBuffer = s.ringBuffer
                 , metaBlockLength = s.metaBlockLength
-                , pos = s.pos
                 , j = s.j
                 }
 
@@ -2416,7 +2384,6 @@ evaluateState8 context ( runningState, nextRunningState, s ) =
         , { s
             | ringBuffer = newSmallerState.ringBuffer
             , metaBlockLength = newSmallerState.metaBlockLength
-            , pos = newSmallerState.pos
             , j = newSmallerState.j
           }
         )
@@ -2435,18 +2402,18 @@ copyUncompressedData s =
     else
         let
             chunkLength =
-                min (RingBuffer.size s.ringBuffer - s.pos) s.metaBlockLength
+                min (RingBuffer.size s.ringBuffer - RingBuffer.position s.ringBuffer) s.metaBlockLength
         in
-        case copyBytesToRingBuffer s.pos chunkLength s.ringBuffer s of
+        case copyBytesToRingBuffer (RingBuffer.position s.ringBuffer) chunkLength s.ringBuffer s of
             Err e ->
                 Err e
 
             Ok ( s1, newRingBuffer ) ->
                 let
                     s2 =
-                        { s1 | ringBuffer = newRingBuffer, metaBlockLength = s1.metaBlockLength - chunkLength, pos = s1.pos + chunkLength }
+                        { s1 | ringBuffer = newRingBuffer, metaBlockLength = s1.metaBlockLength - chunkLength }
                 in
-                if s2.pos == RingBuffer.size s2.ringBuffer then
+                if RingBuffer.position s2.ringBuffer == RingBuffer.size s2.ringBuffer then
                     Ok ( 13, 6, s2 )
 
                 else
@@ -2699,8 +2666,8 @@ remainder7 ( runningState, nextRunningState, s ) =
 
                         -- new.state
                         newMaxDistance =
-                            if new.distance /= s5.maxBackwardDistance && s5.pos < s5.maxBackwardDistance then
-                                s5.pos
+                            if new.distance /= s5.maxBackwardDistance && RingBuffer.position s5.ringBuffer < s5.maxBackwardDistance then
+                                RingBuffer.position s5.ringBuffer
 
                             else
                                 s5.maxBackwardDistance
@@ -2724,7 +2691,7 @@ remainder7 ( runningState, nextRunningState, s ) =
                             )
 
                     else if s5.copyLength > s.metaBlockLength then
-                        Err (CustomError ("Invalid backward reference in remainder7 at position " ++ String.fromInt s5.pos))
+                        Err (CustomError ("Invalid backward reference in remainder7 at position " ++ String.fromInt (RingBuffer.position s5.ringBuffer)))
 
                     else if new.distanceCode > 0 then
                         let
@@ -3092,6 +3059,7 @@ doReadMoreInput s =
                 Err e
 
             Ok ( s2, bytesInBuffer2 ) ->
+                -- can't we just read them as shorts?
                 Ok (bytesToNibbles bytesInBuffer2 s2)
 
 
@@ -3156,12 +3124,14 @@ bytesToNibbles byteLen s =
                             )
                             |> overflow16
                 in
-                go (i + 1) (Array.set i value shortBuffer)
+                -- go (i + 1) (Array.set i value shortBuffer)
+                go (i + 1) (Array.push value shortBuffer)
 
             else
                 shortBuffer
     in
-    { s | shortBuffer = go 0 s.shortBuffer }
+    -- { s | shortBuffer = go 0 s.shortBuffer }
+    { s | shortBuffer = go 0 Array.empty }
 
 
 readInput :
@@ -3253,7 +3223,6 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , metaBlockLength = orig.metaBlockLength
     , num = orig.num
     , blockLength = orig.blockLength
-    , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
     , isTrivialLiteralContext = orig.isTrivialLiteralContext
@@ -3269,9 +3238,6 @@ updateAccumulator newBitOffset newHalfOffset newAccumulator32 orig =
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
     , flags = orig.flags
     , input = orig.input
     }
@@ -3297,7 +3263,6 @@ updateBitOffset newBitOffset orig =
     , metaBlockLength = orig.metaBlockLength
     , num = orig.num
     , blockLength = orig.blockLength
-    , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
     , isTrivialLiteralContext = orig.isTrivialLiteralContext
@@ -3313,16 +3278,13 @@ updateBitOffset newBitOffset orig =
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
     , flags = orig.flags
     , input = orig.input
     }
 
 
-copyState7 : Int -> Int -> Int -> RingBuffer -> Int -> State -> State
-copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
+copyState7 : Int -> Int -> RingBuffer -> Int -> State -> State
+copyState7 bitOffset newJ newRingBuffer literalBlockLength orig =
     { ringBuffer = newRingBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3349,7 +3311,6 @@ copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
         , commandBlockLength = oldBlockLength.commandBlockLength
         , distanceBlockLength = oldBlockLength.distanceBlockLength
         }
-    , pos = newPos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
     , isTrivialLiteralContext = orig.isTrivialLiteralContext
@@ -3365,9 +3326,6 @@ copyState7 bitOffset newPos newJ newRingBuffer literalBlockLength orig =
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
     , flags = orig.flags
     , input = orig.input
     }
@@ -3401,7 +3359,6 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j dist
         , commandBlockLength = oldBlockLength.commandBlockLength
         , distanceBlockLength = distanceBlockLength
         }
-    , pos = orig.pos
     , maxDistance = maxDistance
     , distRbIdx = distRbIdx
     , isTrivialLiteralContext = orig.isTrivialLiteralContext
@@ -3417,16 +3374,13 @@ updateRemainder7 distance maxDistance distanceBlockLength metaBlockLength j dist
     , distance = distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
     , flags = orig.flags
     , input = orig.input
     }
 
 
-updateEvaluateState8 : RingBuffer -> Int -> Int -> Int -> State -> State
-updateEvaluateState8 ringBuffer j metaBlockLength pos orig =
+updateEvaluateState8 : RingBuffer -> Int -> Int -> State -> State
+updateEvaluateState8 ringBuffer j metaBlockLength orig =
     { ringBuffer = ringBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3445,7 +3399,6 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos orig =
     , metaBlockLength = metaBlockLength
     , num = orig.num
     , blockLength = orig.blockLength
-    , pos = pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
     , isTrivialLiteralContext = orig.isTrivialLiteralContext
@@ -3461,16 +3414,13 @@ updateEvaluateState8 ringBuffer j metaBlockLength pos orig =
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
     , flags = orig.flags
     , input = orig.input
     }
 
 
-updateEvaluateState9 : RingBuffer -> Int -> Int -> State -> State
-updateEvaluateState9 ringBuffer pos metaBlockLength orig =
+updateEvaluateState9 : RingBuffer -> Int -> State -> State
+updateEvaluateState9 ringBuffer metaBlockLength orig =
     { ringBuffer = ringBuffer
     , contextModes = orig.contextModes
     , contextMap = orig.contextMap
@@ -3489,7 +3439,6 @@ updateEvaluateState9 ringBuffer pos metaBlockLength orig =
     , metaBlockLength = metaBlockLength
     , num = orig.num
     , blockLength = orig.blockLength
-    , pos = pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
     , isTrivialLiteralContext = orig.isTrivialLiteralContext
@@ -3505,9 +3454,6 @@ updateEvaluateState9 ringBuffer pos metaBlockLength orig =
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
     , flags = orig.flags
     , input = orig.input
     }
@@ -3535,7 +3481,6 @@ copyState orig =
     , metaBlockLength = orig.metaBlockLength
     , num = orig.num
     , blockLength = orig.blockLength
-    , pos = orig.pos
     , maxDistance = orig.maxDistance
     , distRbIdx = orig.distRbIdx
     , isTrivialLiteralContext = orig.isTrivialLiteralContext
@@ -3551,9 +3496,6 @@ copyState orig =
     , distance = orig.distance
     , copyLength = orig.copyLength
     , maxBackwardDistance = orig.maxBackwardDistance
-    , maxRingBufferSize = orig.maxRingBufferSize
-    , ringBufferSize = orig.ringBufferSize
-    , expectedTotalSize = orig.expectedTotalSize
     , flags = orig.flags
     , input = orig.input
     }

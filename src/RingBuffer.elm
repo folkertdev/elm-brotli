@@ -1,8 +1,12 @@
-module RingBuffer exposing (RingBuffer, copyWithin, empty, fromArray, get, maxSize, push, resize, reslice, set, setSlice, size, slice, update, updateExpectation)
+module RingBuffer exposing (RingBuffer, copyWithin, empty, fromArray, get, maxSize, position, push, resize, reslice, set, setSlice, size, slice, update, updateExpectation)
 
 import Array exposing (Array)
 import Array.Helpers
 import Bitwise
+
+
+position (RingBuffer a b c d e) =
+    Array.length a
 
 
 reslice i (RingBuffer a b c d e) =
