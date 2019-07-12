@@ -1814,7 +1814,7 @@ evaluateState1 ( runningState, nextRunningState, s ) =
                     ( 2
                     , nextRunningState
                     , { newS
-                        | ringBuffer = RingBuffer.resize maxRingBufferSize newS.ringBuffer
+                        | ringBuffer = RingBuffer.setMaxSize maxRingBufferSize newS.ringBuffer
                         , maxBackwardDistance = Bitwise.shiftLeftBy windowBits 1 - 16
                       }
                     )
@@ -2075,10 +2075,7 @@ decompressHelp context written runningState nextRunningState s =
                 if position >= RingBuffer.size s.ringBuffer then
                     let
                         newRingBuffer =
-                            s.ringBuffer
-                                -- copy used slack area to the front
-                                |> RingBuffer.copyWithin 0 (RingBuffer.size s.ringBuffer) position
-                                |> RingBuffer.reslice (Bitwise.and position context.ringBufferMask)
+                            RingBuffer.loopAround (Bitwise.and position context.ringBufferMask) s.ringBuffer
 
                         newState =
                             { s
@@ -2176,10 +2173,9 @@ evaluateState4 runningState nextRunningState s =
                         commandBlockData.blockLength
 
                     newBlockLength =
-                        { oldBlockLength
-                            | commandBlockLength = oldBlockLength.commandBlockLength - 1
-                            , literalBlockLength = oldBlockLength.literalBlockLength
-                            , distanceBlockLength = oldBlockLength.distanceBlockLength
+                        { commandBlockLength = oldBlockLength.commandBlockLength - 1
+                        , literalBlockLength = oldBlockLength.literalBlockLength
+                        , distanceBlockLength = oldBlockLength.distanceBlockLength
                         }
                 in
                 Ok
@@ -2456,7 +2452,7 @@ copyBytesToRingBuffer offset length data s =
                     in
                     ( { state | halfOffset = state.halfOffset + copyNibbles }
                     , ( currentOffset + delta, currentLength - delta )
-                    , RingBuffer.setSlice (Array.slice readOffset (readOffset + delta) state.byteBuffer) currentOffset accum
+                    , RingBuffer.appendRight accum (Array.slice readOffset (readOffset + delta) state.byteBuffer)
                     )
 
                 else
@@ -2534,7 +2530,6 @@ writeRingBuffer ringBufferBytesReady written s =
                     newOutput =
                         Array.Helpers.fasterEncode slice :: written.output
 
-                    -- Array.append written.output slice
                     newWritten =
                         { toOutput = written.toOutput + toWrite, fromRingBuffer = written.fromRingBuffer + toWrite, output = newOutput }
                 in
@@ -3159,8 +3154,6 @@ readInput offset length s =
 
                 newByteBuffer =
                     Array.append s.byteBuffer newSegment
-
-                -- Array.Helpers.setSlice newSegment offset s.byteBuffer
             in
             Ok ( { s | input = newInput, byteBuffer = newByteBuffer }, bytesRead )
 

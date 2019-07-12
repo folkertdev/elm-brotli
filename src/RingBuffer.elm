@@ -1,28 +1,8 @@
-module RingBuffer exposing (RingBuffer, copyWithin, empty, fromArray, get, maxSize, position, push, resize, reslice, set, setSlice, size, slice, update, updateExpectation)
+module RingBuffer exposing (RingBuffer, appendRight, copyWithin, empty, get, loopAround, maxSize, position, push, set, setMaxSize, size, slice, unsafeFromArray, update, updateExpectation)
 
 import Array exposing (Array)
 import Array.Helpers
 import Bitwise
-
-
-position (RingBuffer a b c d e) =
-    Array.length a
-
-
-reslice i (RingBuffer a b c d e) =
-    RingBuffer (Array.slice 0 i a) b c d (Just a)
-
-
-fromArray a =
-    RingBuffer a 0 0 0 Nothing
-
-
-resize newMaxRingBufferSize (RingBuffer a b _ d e) =
-    RingBuffer a b newMaxRingBufferSize d e
-
-
-update i f (RingBuffer array b c d e) =
-    RingBuffer (Array.Helpers.update i f array) b c d e
 
 
 type RingBuffer
@@ -35,6 +15,57 @@ type RingBuffer
         -- expected total size
         Int
         (Maybe (Array Int))
+
+
+{-| Get the current position in the ring buffer
+-}
+position : RingBuffer -> Int
+position (RingBuffer a b c d e) =
+    Array.length a
+
+
+size : RingBuffer -> Int
+size (RingBuffer _ s _ _ _) =
+    s
+
+
+maxSize : RingBuffer -> Int
+maxSize (RingBuffer _ _ s _ _) =
+    s
+
+
+{-| The ringbuffer has exceeded its capacity; we reset the position to a lower vlaue
+-}
+loopAround : Int -> RingBuffer -> RingBuffer
+loopAround i (RingBuffer a currentSize c d e) =
+    let
+        newArray =
+            -- copy anything past the "size" to the front
+            Array.Helpers.copyWithin 0 currentSize (Array.length a) a
+                |> Array.slice 0 i
+    in
+    RingBuffer newArray currentSize c d (Just a)
+
+
+{-| turn an array into a ringbuffer. For testing purposes only
+-}
+unsafeFromArray : Array Int -> RingBuffer
+unsafeFromArray a =
+    RingBuffer a 0 0 0 Nothing
+
+
+setMaxSize : Int -> RingBuffer -> RingBuffer
+setMaxSize newMaxRingBufferSize (RingBuffer a b _ d e) =
+    RingBuffer a b newMaxRingBufferSize d e
+
+
+appendRight : RingBuffer -> Array Int -> RingBuffer
+appendRight (RingBuffer a b c d e) newRight =
+    RingBuffer (Array.append a newRight) b c d e
+
+
+update i f (RingBuffer array b c d e) =
+    RingBuffer (Array.Helpers.update i f array) b c d e
 
 
 set : Int -> Int -> RingBuffer -> RingBuffer
@@ -61,11 +92,11 @@ get i (RingBuffer array _ _ _ previous) =
                             v
 
                         Nothing ->
-                            -- Debug.todo ("prev insufficient & unsafe get, asked for " ++ String.fromInt i ++ " but the  length is only " ++ String.fromInt (Array.length array))
+                            -- this should never happen, as this is an access outside of the bounds of the ringbuffer
                             0
 
                 Nothing ->
-                    -- Debug.todo ("no prev & unsafe get, asked for " ++ String.fromInt i ++ " but the  length is only " ++ String.fromInt (Array.length array))
+                    -- no previous array, assume the ringbuffer is initially filled with 0's
                     0
 
         Just v ->
@@ -136,14 +167,6 @@ maybeReallocate { inputEnd } expectedTotalSize ((RingBuffer array ringBufferSize
             -}
         in
         RingBuffer array newSize maxRingBufferSize expectedTotalSize previous
-
-
-size (RingBuffer _ s _ _ _) =
-    s
-
-
-maxSize (RingBuffer _ _ s _ _) =
-    s
 
 
 updateExpectation flags metaBlockLength ((RingBuffer array ringBufferSize maxRingBufferSize expectedTotalSize previous) as input) =

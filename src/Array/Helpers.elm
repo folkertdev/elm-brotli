@@ -1,4 +1,4 @@
-module Array.Helpers exposing (copyWithin, decodeArray, decodeByteArray, fasterEncode, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, unsafeGet, update)
+module Array.Helpers exposing (copyWithin, decodeArray, decodeByteArray, decodeShortArray, fasterEncode, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, unsafeGet, update)
 
 import Array exposing (Array)
 import Bitwise
@@ -110,6 +110,42 @@ hasDuplicatesList list =
     go Set.empty list
 
 
+decodeShortArray : Int -> Decoder (Array Int)
+decodeShortArray n =
+    Decode.loop ( n, Array.empty ) decodeShortArrayHelp
+
+
+decodeShortArrayHelp : ( Int, Array Int ) -> Decoder (Decode.Step ( Int, Array Int ) (Array Int))
+decodeShortArrayHelp ( remaining, accum ) =
+    if remaining >= 4 then
+        Decode.unsignedInt32 BE
+            |> Decode.map
+                (\new ->
+                    let
+                        short1 =
+                            Bitwise.shiftRightBy 16 new
+
+                        short2 =
+                            new
+
+                        newAccum =
+                            accum
+                                |> Array.push short1
+                                |> Array.push short2
+                    in
+                    Decode.Loop ( remaining - 4, newAccum )
+                )
+
+    else if remaining >= 2 then
+        Decode.unsignedInt16 BE |> Decode.map (\new -> Decode.Loop ( remaining - 2, Array.push new accum ))
+
+    else if remaining > 0 then
+        Decode.unsignedInt8 |> Decode.map (\new -> Decode.Loop ( remaining - 1, Array.push (Bitwise.shiftLeftBy 8 new) accum ))
+
+    else
+        Decode.succeed (Decode.Done accum)
+
+
 decodeByteArray : Int -> Decoder (Array Int)
 decodeByteArray n =
     Decode.loop ( n, Array.empty ) decodeByteArrayHelp
@@ -127,12 +163,14 @@ decodeByteArrayHelp ( remaining, accum ) =
 
                         byte2 =
                             Bitwise.shiftRightBy 16 new
+                                |> Bitwise.and 0xFF
 
                         byte3 =
                             Bitwise.shiftRightBy 8 new
+                                |> Bitwise.and 0xFF
 
                         byte4 =
-                            new
+                            Bitwise.and 0xFF new
 
                         newAccum =
                             accum
