@@ -128,17 +128,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
             len - (omitFirst + omitLast)
 
         prefixSuffixLoop currentSuffix fixEnd currentOffset accum =
-            if currentSuffix < fixEnd then
-                case Array.get currentSuffix prefixSuffixStorage of
-                    Nothing ->
-                        ( currentOffset, accum )
-
-                    Just value ->
-                        prefixSuffixLoop (currentSuffix + 1) fixEnd (currentOffset + 1) (RingBuffer.set currentOffset value accum)
-                -- prefixSuffixLoop (currentSuffix + 1) fixEnd (currentOffset + 1) (RingBuffer.push value accum)
-
-            else
-                ( currentOffset, accum )
+            Array.Helpers.sliceFoldl currentSuffix fixEnd (\e ( i, a ) -> ( i + 1, RingBuffer.set i e a )) ( currentOffset, accum ) prefixSuffixStorage
 
         applyTransform1 : Int -> Int -> RingBuffer -> RingBuffer
         applyTransform1 inputLen_ currentOffset =
@@ -156,7 +146,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
                             go (currentLen - 1)
                                 (uppercaseOffset + 1)
                                 (if c0 >= 97 && c0 <= 122 then
-                                    RingBuffer.update uppercaseOffset (\v -> Bitwise.xor v 32) accum
+                                    RingBuffer.set uppercaseOffset (Bitwise.xor c0 32) accum
 
                                  else
                                     accum
@@ -210,12 +200,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
             go inputLen_ (currentOffset - inputLen_) (Bitwise.and param 0x7FFF + (0x01000000 - Bitwise.and param 0x8000))
 
         go1 i currentOffset currentSourceOffset accum =
-            if i > 0 then
-                go1 (i - 1) (currentOffset + 1) (currentSourceOffset + 1) (RingBuffer.set currentOffset (Array.Helpers.unsafeGet currentSourceOffset src) accum)
-                -- go1 (i - 1) (currentOffset + 1) (currentSourceOffset + 1) (RingBuffer.push (Array.Helpers.unsafeGet currentSourceOffset src) accum)
-
-            else
-                ( currentOffset, accum )
+            Array.Helpers.sliceFoldl currentSourceOffset (currentSourceOffset + i) (\e ( index, a ) -> ( index + 1, RingBuffer.set index e a )) ( currentOffset, accum ) src
     in
     let
         ( offset1, accum1 ) =
@@ -372,6 +357,7 @@ unpackTransforms prefixSuffixSrc transformsSrc transforms =
 
         newTriplets =
             go2 0 transforms.triplets
+                |> Debug.log "new triplets"
 
         ( newPrefixSuffixStorage, newPrefixSuffixHeads ) =
             go 0 0 1 transforms.prefixSuffixStorage transforms.prefixSuffixHeads

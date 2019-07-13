@@ -1,4 +1,4 @@
-module RingBuffer exposing (RingBuffer, appendRight, copyWithin, empty, get, loopAround, maxSize, position, push, set, setMaxSize, size, slice, unsafeFromArray, update, updateExpectation)
+module RingBuffer exposing (RingBuffer, appendRight, copyWithin, empty, get, loopAround, maxSize, position, push, set, setMaxSize, size, slice, sliceFoldl, unsafeFromArray, update, updateExpectation)
 
 import Array exposing (Array)
 import Array.Helpers
@@ -111,6 +111,11 @@ push value (RingBuffer array b c d e) =
 slice : Int -> Int -> RingBuffer -> Array Int
 slice from to (RingBuffer array _ _ _ _) =
     Array.slice from to array
+
+
+sliceFoldl : Int -> Int -> (Int -> b -> b) -> b -> RingBuffer -> b
+sliceFoldl from to folder default (RingBuffer array _ _ _ _) =
+    Array.Helpers.sliceFoldl from to folder default array
 
 
 empty max =

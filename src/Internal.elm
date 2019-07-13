@@ -193,6 +193,10 @@ initState s =
     calculateDistanceAlphabetLimit 0x7FFFFFFC 3 (Bitwise.shiftLeftBy 3 15)
         |> Result.map
             (\maxDistanceAlphabetLimit ->
+                let
+                    _ =
+                        Debug.log "rings" s.rings
+                in
                 { s
                     | blockTrees = Array.append (Array.fromList [ 7 ]) (Array.repeat 3090 0)
                     , distRbIdx = 3
@@ -2054,17 +2058,17 @@ decompressHelp context written runningState nextRunningState s =
 
         13 ->
             let
-                position =
-                    RingBuffer.position s.ringBuffer
-
                 ( wasWritten, newWritten ) =
-                    writeRingBuffer (min position (RingBuffer.size s.ringBuffer)) written s
+                    writeRingBuffer written s.ringBuffer
             in
             if not wasWritten then
                 Ok ( ( runningState, nextRunningState, s ), context, newWritten )
 
             else
                 let
+                    position =
+                        RingBuffer.position s.ringBuffer
+
                     newMaxDistance =
                         if position >= s.maxBackwardDistance then
                             s.maxBackwardDistance
@@ -2326,8 +2330,13 @@ evaluateState8 context ( runningState, nextRunningState, s ) =
     in
     if (srcEnd < context.ringBufferMask) && (dstEnd < context.ringBufferMask) then
         let
+            -- sliceFoldl is slower because of allocation, probably
             newRingBuffer =
-                RingBuffer.copyWithin dst src srcEnd s.ringBuffer
+                if False && (dst < src || dst > srcEnd) then
+                    RingBuffer.sliceFoldl src srcEnd RingBuffer.push s.ringBuffer s.ringBuffer
+
+                else
+                    RingBuffer.copyWithin dst src srcEnd s.ringBuffer
         in
         ( if runningState == 8 then
             4
@@ -2515,20 +2524,31 @@ copyBytesToRingBuffer offset length data s =
                 readFromInput s2 offset2 length2 data2
 
 
-writeRingBuffer : Int -> Written -> State -> ( Bool, Written )
-writeRingBuffer ringBufferBytesReady written s =
+writeRingBuffer : Written -> RingBuffer -> ( Bool, Written )
+writeRingBuffer written ringBuffer =
     let
+        ringBufferBytesReady =
+            min (RingBuffer.position ringBuffer) (RingBuffer.size ringBuffer)
+
         toWrite =
             min (Constants.outputLength - written.toOutput) (ringBufferBytesReady - written.fromRingBuffer)
 
         newerWritten =
             if toWrite /= 0 then
                 let
-                    slice =
-                        RingBuffer.slice written.fromRingBuffer (written.fromRingBuffer + toWrite) s.ringBuffer
-
+                    -- @performance this slice is very slow. Would benefit from `Array.foldlSlice : Int -> Int -> (a -> b -> b) -> b -> b`
+                    -- to use it with encoding without allocating the slice
+                    -- slice = RingBuffer.slice written.fromRingBuffer (written.fromRingBuffer + toWrite) ringBuffer
+                    -- newOutput = Array.Helpers.fasterEncode slice :: written.output
                     newOutput =
-                        Array.Helpers.fasterEncode slice :: written.output
+                        let
+                            encoderList =
+                                RingBuffer.sliceFoldl written.fromRingBuffer (written.fromRingBuffer + toWrite) Array.Helpers.fasterEncodeFolderL ( 0, 0, [] ) ringBuffer
+                                    |> Array.Helpers.fasterEncodeL
+                                    |> List.reverse
+                                    |> Encode.sequence
+                        in
+                        encoderList :: written.output
 
                     newWritten =
                         { toOutput = written.toOutput + toWrite, fromRingBuffer = written.fromRingBuffer + toWrite, output = newOutput }

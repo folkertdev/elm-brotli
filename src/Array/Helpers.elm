@@ -1,4 +1,4 @@
-module Array.Helpers exposing (copyWithin, decodeArray, decodeByteArray, decodeShortArray, fasterEncode, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, unsafeGet, update)
+module Array.Helpers exposing (copyWithin, decodeArray, decodeByteArray, decodeShortArray, fasterEncode, fasterEncodeFolder, fasterEncodeFolderL, fasterEncodeL, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, sliceFoldl, unsafeGet, update)
 
 import Array exposing (Array)
 import Bitwise
@@ -8,11 +8,39 @@ import Bytes.Encode as Encode
 import Set
 
 
+sliceFoldl : Int -> Int -> (a -> b -> b) -> b -> Array a -> b
+sliceFoldl start end folder default array =
+    -- 12 is the cutoff point in chrome, it is actually lower in FF
+    let
+        n =
+            12
+    in
+    if end - start >= n then
+        Array.slice start end array |> Array.foldl folder default
+
+    else
+        manualLoop start end folder default array
+
+
+manualLoop : Int -> Int -> (a -> b -> b) -> b -> Array a -> b
+manualLoop i n folder accum data =
+    if i < n then
+        case Array.get i data of
+            Nothing ->
+                accum
+
+            Just value ->
+                manualLoop (i + 1) n folder (folder value accum) data
+
+    else
+        accum
+
+
 fasterEncode : Array Int -> Encode.Encoder
 fasterEncode values =
     let
         ( bytesOnAccum, accum, otherEncoders ) =
-            Array.foldr folder ( 0, 0, [] ) values
+            Array.foldr fasterEncodeFolder ( 0, 0, [] ) values
 
         encoders =
             case bytesOnAccum of
@@ -39,7 +67,7 @@ fasterEncode values =
         |> Encode.sequence
 
 
-folder byte ( bytesOnAccum, accum, encoders ) =
+fasterEncodeFolder byte ( bytesOnAccum, accum, encoders ) =
     case bytesOnAccum of
         0 ->
             ( 1, Bitwise.and 0xFF byte, encoders )
@@ -65,6 +93,59 @@ folder byte ( bytesOnAccum, accum, encoders ) =
                 value =
                     Bitwise.or accum
                         (Bitwise.shiftLeftBy 24 (Bitwise.and 0xFF byte))
+            in
+            ( 0, 0, Encode.unsignedInt32 BE value :: encoders )
+
+
+fasterEncodeL ( bytesOnAccum, accum, otherEncoders ) =
+    let
+        encoders =
+            case bytesOnAccum of
+                0 ->
+                    otherEncoders
+
+                1 ->
+                    Encode.unsignedInt8 accum :: otherEncoders
+
+                2 ->
+                    Encode.unsignedInt16 BE accum :: otherEncoders
+
+                _ ->
+                    let
+                        firstByte =
+                            Bitwise.and 0xFF accum
+
+                        otherBytes =
+                            Bitwise.shiftRightBy 8 accum
+                    in
+                    Encode.unsignedInt8 firstByte :: Encode.unsignedInt16 BE otherBytes :: otherEncoders
+    in
+    encoders
+
+
+fasterEncodeFolderL byte ( bytesOnAccum, accum, encoders ) =
+    case bytesOnAccum of
+        0 ->
+            ( 1, Bitwise.and 0xFF byte, encoders )
+
+        1 ->
+            let
+                value =
+                    Bitwise.or (Bitwise.shiftLeftBy 8 accum) (Bitwise.and 0xFF byte)
+            in
+            ( 2, value, encoders )
+
+        2 ->
+            let
+                value =
+                    Bitwise.or (Bitwise.shiftLeftBy 8 accum) (Bitwise.and 0xFF byte)
+            in
+            ( 3, value, encoders )
+
+        _ ->
+            let
+                value =
+                    Bitwise.or (Bitwise.shiftLeftBy 8 accum) (Bitwise.and 0xFF byte)
             in
             ( 0, 0, Encode.unsignedInt32 BE value :: encoders )
 
