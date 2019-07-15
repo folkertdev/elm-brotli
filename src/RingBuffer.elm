@@ -1,4 +1,4 @@
-module RingBuffer exposing (RingBuffer, appendRight, copyWithin, empty, get, loopAround, maxSize, position, push, set, setMaxSize, size, slice, sliceFoldl, unsafeFromArray, update, updateExpectation)
+module RingBuffer exposing (RingBuffer, appendRight, copyWithin, empty, get, getAtCurrentPosition, loopAround, maxSize, position, push, set, setMaxSize, size, slice, sliceFoldl, sliceFoldr, unsafeFromArray, update, updateExpectation)
 
 import Array exposing (Array)
 import Array.Helpers
@@ -15,6 +15,11 @@ type RingBuffer
         -- expected total size
         Int
         (Maybe (Array Int))
+
+
+getAtCurrentPosition : RingBuffer -> Int
+getAtCurrentPosition input =
+    get (position input) input
 
 
 {-| Get the current position in the ring buffer
@@ -118,6 +123,11 @@ sliceFoldl from to folder default (RingBuffer array _ _ _ _) =
     Array.Helpers.sliceFoldl from to folder default array
 
 
+sliceFoldr : Int -> Int -> (Int -> b -> b) -> b -> RingBuffer -> b
+sliceFoldr from to folder default (RingBuffer array _ _ _ _) =
+    Array.Helpers.sliceFoldr from to folder default array
+
+
 empty max =
     RingBuffer Array.empty 0 max 0 Nothing
 
@@ -203,33 +213,31 @@ copyWithin dest start end (RingBuffer array a b c e) =
         copyLength =
             end - start
 
-        go k currentDst currentSrc accum =
-            if k < copyLength then
-                go (k + 1)
-                    (currentDst + 1)
-                    (currentSrc + 1)
+        go k currentSrc accum =
+            if copyLength - k >= 4 then
+                go (k + 4)
+                    (currentSrc + 4)
                     (let
                         a0 =
                             accum
 
-                        -- a1 = Array.set (currentDst + 0) (Array.Helpers.unsafeGet (currentSrc + 0) a0) a0
                         a1 =
                             Array.push (Array.Helpers.unsafeGet (currentSrc + 0) a0) a0
 
-                        {-
-                           a2 =
-                               Array.set (currentDst + 1) (Array.Helpers.unsafeGet (currentSrc + 1) a1) a1
+                        a2 =
+                            Array.push (Array.Helpers.unsafeGet (currentSrc + 1) a1) a1
 
-                           a3 =
-                               Array.set (currentDst + 2) (Array.Helpers.unsafeGet (currentSrc + 2) a2) a2
+                        a3 =
+                            Array.push (Array.Helpers.unsafeGet (currentSrc + 2) a2) a2
 
-                           a4 =
-                               Array.set (currentDst + 3) (Array.Helpers.unsafeGet (currentSrc + 3) a3) a3
-                        -}
+                        a4 =
+                            Array.push (Array.Helpers.unsafeGet (currentSrc + 3) a3) a3
                      in
-                     -- a4
-                     a1
+                     a4
                     )
+
+            else if k < copyLength then
+                go (k + 1) (currentSrc + 1) (Array.push (Array.Helpers.unsafeGet (currentSrc + 0) accum) accum)
 
             else
                 accum
@@ -244,7 +252,7 @@ copyWithin dest start end (RingBuffer array a b c e) =
 
        else
     -}
-    RingBuffer (go 0 dest start array) a b c e
+    RingBuffer (go 0 start array) a b c e
 
 
 setSlice segment dest (RingBuffer array a b c e) =

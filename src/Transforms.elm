@@ -3,6 +3,7 @@ module Transforms exposing (Transforms, new, rfc_transforms, transformDictionary
 import Array exposing (Array)
 import Array.Helpers
 import Bitwise
+import DictionaryData exposing (DictionaryData)
 import RingBuffer exposing (RingBuffer)
 
 
@@ -59,7 +60,7 @@ The transformations are described [here](https://tools.ietf.org/html/rfc7932#pag
 You can see that the brotli spec is really geared towards English text.
 
 -}
-transformDictionaryWord : RingBuffer -> Int -> Array Int -> Int -> Int -> Transforms -> Int -> ( RingBuffer, Int )
+transformDictionaryWord : RingBuffer -> Int -> DictionaryData -> Int -> Int -> Transforms -> Int -> ( RingBuffer, Int )
 transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformIndex =
     let
         offset =
@@ -200,7 +201,7 @@ transformDictionaryWord dst dstOffset src srcOffset_ len transforms transformInd
             go inputLen_ (currentOffset - inputLen_) (Bitwise.and param 0x7FFF + (0x01000000 - Bitwise.and param 0x8000))
 
         go1 i currentOffset currentSourceOffset accum =
-            Array.Helpers.sliceFoldl currentSourceOffset (currentSourceOffset + i) (\e ( index, a ) -> ( index + 1, RingBuffer.set index e a )) ( currentOffset, accum ) src
+            DictionaryData.sliceFoldl currentSourceOffset (currentSourceOffset + i) (\e ( index, a ) -> ( index + 1, RingBuffer.set index e a )) ( currentOffset, accum ) src
     in
     let
         ( offset1, accum1 ) =
@@ -357,7 +358,6 @@ unpackTransforms prefixSuffixSrc transformsSrc transforms =
 
         newTriplets =
             go2 0 transforms.triplets
-                |> Debug.log "new triplets"
 
         ( newPrefixSuffixStorage, newPrefixSuffixHeads ) =
             go 0 0 1 transforms.prefixSuffixStorage transforms.prefixSuffixHeads

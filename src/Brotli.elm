@@ -36,6 +36,7 @@ This package decodes `Bytes` sequences that are compressed with the brotli algor
 
 import Bytes exposing (Bytes)
 import Internal
+import State
 
 
 {-| Decode a brotli-encoded bytes sequence
@@ -53,56 +54,56 @@ decode buffer =
             Ok v
 
 
-renderError : Internal.Error -> String
+renderError : State.Error -> String
 renderError error =
     case error of
-        Internal.MaxDistanceTooSmall { actual, minimal } ->
+        State.MaxDistanceTooSmall { actual, minimal } ->
             "maxDistance is too small: it should be at least" ++ String.fromInt minimal ++ ", but it is only " ++ String.fromInt actual
 
-        Internal.StateNotInitialized ->
+        State.StateNotInitialized ->
             "State not initialized"
 
-        Internal.ReadAfterEnd ->
+        State.ReadAfterEnd ->
             "Read after end"
 
-        Internal.UnusedByteAfterEnd ->
+        State.UnusedByteAfterEnd ->
             "Unused byte after end"
 
-        Internal.ExuberantNibble ->
+        State.ExuberantNibble ->
             "Exuberant nibble"
 
-        Internal.ExuberantByte ->
+        State.ExuberantByte ->
             "Exuberant byte"
 
-        Internal.CorruptedReservedBit ->
+        State.CorruptedReservedBit ->
             "Corrupted reserved bit"
 
-        Internal.CorruptedHuffmanHistogram ->
+        State.CorruptedHuffmanHistogram ->
             "Corrupted Huffman histogram"
 
-        Internal.CustomError message ->
+        State.CustomError message ->
             message
 
-        Internal.UnusedSpace ->
+        State.UnusedSpace ->
             "Unused space"
 
-        Internal.NoHuffmanCode symbol ->
+        State.NoHuffmanCode symbol ->
             "There is no huffman code for symbol " ++ String.fromInt symbol ++ ", it is outside of the alphabet!"
 
-        Internal.CorruptedContextMap ->
+        State.CorruptedContextMap ->
             "Corrupted ContextMap"
 
-        Internal.InvalidWindowBits ->
+        State.InvalidWindowBits ->
             "Invalid window bits"
 
-        Internal.InvalidMetablockLength ->
-            "invalid MetaBlock length"
+        State.InvalidMetablockLength ->
+            "Invalid MetaBlock length"
 
-        Internal.InvalidBackwardReference message ->
+        State.InvalidBackwardReference message ->
             message
 
-        Internal.UnalignedCopyBytes ->
+        State.UnalignedCopyBytes ->
             "Unaligned copy bytes"
 
-        Internal.CorruptedPaddingBits ->
+        State.CorruptedPaddingBits ->
             "Corrupted padding bits"

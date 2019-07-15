@@ -1,4 +1,4 @@
-module Array.Helpers exposing (copyWithin, decodeArray, decodeByteArray, decodeShortArray, fasterEncode, fasterEncodeFolder, fasterEncodeFolderL, fasterEncodeL, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, sliceFoldl, unsafeGet, update)
+module Array.Helpers exposing (copyWithin, decodeArray, decodeByteArray, decodeByteArrayLowLevel, decodeShortArray, fasterEncodeFolderL, fasterEncodeFolderR, fasterEncodeL, fasterEncodeR, fill, hasDuplicates, inverseMoveToFrontTransform, moveToFront, replicateValue, setSlice, sliceFoldl, sliceFoldr, unsafeGet, update)
 
 import Array exposing (Array)
 import Bitwise
@@ -11,6 +11,7 @@ import Set
 sliceFoldl : Int -> Int -> (a -> b -> b) -> b -> Array a -> b
 sliceFoldl start end folder default array =
     -- 12 is the cutoff point in chrome, it is actually lower in FF
+    -- but in practice this seems slower (maybe because of GC)
     let
         n =
             12
@@ -19,29 +20,53 @@ sliceFoldl start end folder default array =
         Array.slice start end array |> Array.foldl folder default
 
     else
-        manualLoop start end folder default array
+        sliceFoldLManualLoop start end folder default array
 
 
-manualLoop : Int -> Int -> (a -> b -> b) -> b -> Array a -> b
-manualLoop i n folder accum data =
+sliceFoldLManualLoop : Int -> Int -> (a -> b -> b) -> b -> Array a -> b
+sliceFoldLManualLoop i n folder accum data =
     if i < n then
         case Array.get i data of
             Nothing ->
                 accum
 
             Just value ->
-                manualLoop (i + 1) n folder (folder value accum) data
+                sliceFoldLManualLoop (i + 1) n folder (folder value accum) data
 
     else
         accum
 
 
-fasterEncode : Array Int -> Encode.Encoder
-fasterEncode values =
+sliceFoldr : Int -> Int -> (a -> b -> b) -> b -> Array a -> b
+sliceFoldr start end folder default array =
+    -- 12 is the cutoff point in chrome, it is actually lower in FF
     let
-        ( bytesOnAccum, accum, otherEncoders ) =
-            Array.foldr fasterEncodeFolder ( 0, 0, [] ) values
+        n =
+            12 * 10000
+    in
+    if end - start >= n then
+        Array.slice start end array |> Array.foldr folder default
 
+    else
+        sliceFoldRManualLoop start (end - 1) folder default array
+
+
+sliceFoldRManualLoop : Int -> Int -> (a -> b -> b) -> b -> Array a -> b
+sliceFoldRManualLoop lower current folder accum data =
+    if current >= lower then
+        case Array.get current data of
+            Nothing ->
+                accum
+
+            Just value ->
+                sliceFoldRManualLoop lower (current - 1) folder (folder value accum) data
+
+    else
+        accum
+
+
+fasterEncodeR ( bytesOnAccum, accum, otherEncoders ) =
+    let
         encoders =
             case bytesOnAccum of
                 0 ->
@@ -64,10 +89,9 @@ fasterEncode values =
                     Encode.unsignedInt16 BE otherBytes :: Encode.unsignedInt8 firstByte :: otherEncoders
     in
     encoders
-        |> Encode.sequence
 
 
-fasterEncodeFolder byte ( bytesOnAccum, accum, encoders ) =
+fasterEncodeFolderR byte ( bytesOnAccum, accum, encoders ) =
     case bytesOnAccum of
         0 ->
             ( 1, Bitwise.and 0xFF byte, encoders )
@@ -230,6 +254,11 @@ decodeShortArrayHelp ( remaining, accum ) =
 decodeByteArray : Int -> Decoder (Array Int)
 decodeByteArray n =
     Decode.loop ( n, Array.empty ) decodeByteArrayHelp
+
+
+decodeByteArrayLowLevel : Int -> Array Int -> Decoder (Array Int)
+decodeByteArrayLowLevel n initial =
+    Decode.loop ( n, initial ) decodeByteArrayHelp
 
 
 decodeByteArrayHelp : ( Int, Array Int ) -> Decoder (Decode.Step ( Int, Array Int ) (Array Int))

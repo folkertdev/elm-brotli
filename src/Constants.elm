@@ -1,4 +1,4 @@
-module Constants exposing (block_length_n_bits, block_length_offset, calculateOffsets, charCodeAt, cmd_lookup, code_length_code_order, copy_length_n_bits, dictionary_data, dictionary_offsets_by_length, dictionary_size_bits_by_length, distance_short_code_index_offset, distance_short_code_value_offset, fixed_table, insert_length_n_bits, lookup, max_huffman_table_size, max_length, outputLength, skipFlipAlt, toUsAsciiBytes, unpackCommandLookupTable, unpackDictionaryData, unpackLookupTable)
+module Constants exposing (block_length_n_bits, block_length_offset, calculateOffsets, charCodeAt, cmd_lookup, code_length_code_order, copy_length_n_bits, dictionary_offsets_by_length, dictionary_size_bits_by_length, distance_short_code_index_offset, distance_short_code_value_offset, fixed_table, insert_length_n_bits, lookup, max_huffman_table_size, max_length, outputLength, skipFlipAlt, toUsAsciiBytes, unpackCommandLookupTable, unpackDictionaryData, unpackLookupTable)
 
 import Array exposing (Array)
 import Array.Helpers
@@ -6,7 +6,6 @@ import Bitwise
 import Bytes
 import Bytes.Decode as Decode
 import Bytes.Encode as Encode
-import DictionaryData
 
 
 outputLength : Int
@@ -31,10 +30,6 @@ fixed_table =
 
 dictionary_offsets_by_length =
     Array.fromList [ 0, 0, 0, 0, 0, 4096, 9216, 21504, 35840, 44032, 53248, 63488, 74752, 87040, 93696, 100864, 104704, 106752, 108928, 113536, 115968, 118528, 119872, 121280, 122016 ]
-
-
-dictionary_data =
-    unpackDictionaryData DictionaryData.data0 DictionaryData.data1
 
 
 dictionary_size_bits_by_length =

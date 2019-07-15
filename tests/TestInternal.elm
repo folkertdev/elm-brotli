@@ -6,10 +6,12 @@ import Bytes exposing (Endianness(..))
 import Bytes.Decode as Decode
 import Bytes.Encode as Encode
 import Constants
+import DictionaryData
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, int, list, string)
 import Internal
 import RingBuffer
+import State
 import Test exposing (..)
 import Transforms
 
@@ -190,12 +192,12 @@ bug2 =
                     result =
                         Array.fromList [ 116, 105, 109, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ]
                 in
-                Transforms.transformDictionaryWord (RingBuffer.unsafeFromArray ringBuffer) 0 Constants.dictionary_data 0 4 Transforms.rfc_transforms 0
+                Transforms.transformDictionaryWord (RingBuffer.unsafeFromArray ringBuffer) 0 DictionaryData.dictionary 0 4 Transforms.rfc_transforms 0
                     |> Tuple.mapFirst (RingBuffer.slice 0 200)
                     |> Expect.equal ( result, 4 )
         , test "calculateDistanceAlphabetSize" <|
             \_ ->
-                Internal.calculateDistanceAlphabetSize 0 0 24
+                State.calculateDistanceAlphabetSize 0 0 24
                     |> Expect.equal 64
 
         {-
@@ -396,7 +398,9 @@ bug2 =
                         List.length bytes
 
                     new =
-                        Array.Helpers.fasterEncode (Array.fromList bytes)
+                        List.foldr Array.Helpers.fasterEncodeFolderR ( 0, 0, [] ) bytes
+                            |> Array.Helpers.fasterEncodeR
+                            |> Encode.sequence
                             |> Encode.encode
                             |> Decode.decode (Array.Helpers.decodeArray n Decode.unsignedInt8)
 
