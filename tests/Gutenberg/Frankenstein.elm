@@ -1,4 +1,3 @@
-
 module Gutenberg.Frankenstein exposing(text, bytes) 
 
 text : String

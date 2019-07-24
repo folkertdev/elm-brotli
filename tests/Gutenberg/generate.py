@@ -3,8 +3,7 @@ import brotli
 import glob
 import os
 
-test_file_format = """
-module Gutenberg.{} exposing(text, bytes) 
+test_file_format = """module Gutenberg.{} exposing(text, bytes) 
 
 text : String
 text = \"""{}\"""
@@ -13,8 +12,7 @@ bytes : List Int
 bytes = {}
 """
 
-gutenberg_format = """
-module Gutenberg exposing (tests)
+gutenberg_format = """module Gutenberg exposing (tests)
 
 import Bytes
 import Bytes.Encode as Encode 
